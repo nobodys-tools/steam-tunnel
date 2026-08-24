@@ -9,6 +9,7 @@ $Dir = Join-Path $env:LOCALAPPDATA 'steam-tunnel'
 Remove-Item -Recurse -Force $Dir
 Remove-Item -Force (Join-Path ([Environment]::GetFolderPath('Programs')) 'steam-tunnel.lnk')
 Remove-Item -Force (Join-Path ([Environment]::GetFolderPath('Desktop')) 'steam-tunnel.lnk')
+Remove-Item -Force (Join-Path ([Environment]::GetFolderPath('Startup')) 'steam-tunnel.lnk')
 
 # drop the install dir from the user PATH again
 $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')

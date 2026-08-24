@@ -42,7 +42,29 @@ LD_LIBRARY_PATH="$DATA_DIR" exec "$DATA_DIR/steam-tunnel" "\$@"
 EOF
 chmod +x "$BIN_DIR/steam-tunnel"
 
+# app-menu entry, so no terminal is ever needed
+APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$APPS_DIR"
+cat > "$APPS_DIR/steam-tunnel.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=steam-tunnel
+Comment=Play LAN games with Steam friends over Steam networking
+Exec=$BIN_DIR/steam-tunnel
+Icon=network-workgroup
+Terminal=false
+Categories=Network;Game;
+EOF
+
+# autostart is opt-in: STEAM_TUNNEL_AUTOSTART=1 curl ... | sh
+if [ "${STEAM_TUNNEL_AUTOSTART:-}" = "1" ]; then
+    mkdir -p "$HOME/.config/autostart"
+    cp "$APPS_DIR/steam-tunnel.desktop" "$HOME/.config/autostart/steam-tunnel.desktop"
+    echo "Autostart enabled (remove ~/.config/autostart/steam-tunnel.desktop to undo)."
+fi
+
 echo "Installed to $DATA_DIR"
+echo "Launch 'steam-tunnel' from your app menu (it opens the web UI on first start)."
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
     *) echo "note: $BIN_DIR is not on your PATH — add it, or run $BIN_DIR/steam-tunnel" ;;

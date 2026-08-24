@@ -30,6 +30,16 @@ foreach ($Folder in @([Environment]::GetFolderPath('Programs'), [Environment]::G
     $Lnk.Save()
 }
 
+# autostart is opt-in: $env:STEAM_TUNNEL_AUTOSTART=1; irm ... | iex
+if ($env:STEAM_TUNNEL_AUTOSTART -eq '1') {
+    $Startup = [Environment]::GetFolderPath('Startup')
+    $Lnk = $Shell.CreateShortcut((Join-Path $Startup 'steam-tunnel.lnk'))
+    $Lnk.TargetPath = Join-Path $Dir 'steam-tunnel.exe'
+    $Lnk.WorkingDirectory = $Dir
+    $Lnk.Save()
+    Write-Host "Autostart enabled (remove the Startup shortcut to undo)."
+}
+
 # put the install dir on the user PATH so `steam-tunnel` works in terminals
 $UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (-not $UserPath) { $UserPath = '' }

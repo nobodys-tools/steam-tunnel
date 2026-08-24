@@ -109,6 +109,16 @@
 
   <div id="invites"></div>
 
+  <div class="card simp" id="welcome" style="display:none">
+    <h2>Welcome 👋</h2>
+    <div class="hint">steam-tunnel lets you and your Steam friends play
+      LAN-style games together over the internet — no port forwarding, no
+      server rental. Keep <b>Steam running</b>, share a game in step 1,
+      invite a friend in step 2. Your friend needs steam-tunnel too:
+      <button class="small" onclick="copyFriendText(this)">copy the install
+      message</button> and send it to them in Steam chat.</div>
+  </div>
+
   <div class="card simp steps">
     <h2><b class="n">1</b> Share a game</h2>
     <div class="hint">Pick what your friends should join. Games already
@@ -129,6 +139,9 @@
       <input class="friendpick" id="simplePick" placeholder="search friend…">
       <button onclick="inviteAllShares()">Invite</button>
     </div>
+    <div class="hint" style="margin-top:8px">Friend doesn't have steam-tunnel
+      yet? <button class="small" onclick="copyFriendText(this)">Copy install
+      message</button> and send it via Steam chat.</div>
     <div id="simpleConns" style="margin-top:10px"></div>
   </div>
 
@@ -503,6 +516,18 @@ function dismissUpdate() {
   document.getElementById('updateCard').style.display = 'none';
 }
 function copyUpdCmd() { navigator.clipboard.writeText(INSTALL_CMD); }
+function copyFriendText(btn) {
+  const t = 'Play LAN games with me over Steam! Install steam-tunnel:\n' +
+    'Windows — paste into PowerShell:\n' +
+    '  irm https://raw.githubusercontent.com/nobodys-tools/steam-tunnel/main/install.ps1 | iex\n' +
+    'Linux — paste into a terminal:\n' +
+    '  curl -fsSL https://raw.githubusercontent.com/nobodys-tools/steam-tunnel/main/install.sh | sh\n' +
+    'Then start Steam, launch steam-tunnel, and accept my invite.\n' +
+    'More info: https://github.com/nobodys-tools/steam-tunnel';
+  navigator.clipboard.writeText(t);
+  if (btn) { const old = btn.textContent; btn.textContent = 'copied ✓';
+             setTimeout(() => btn.textContent = old, 1500); }
+}
 checkUpdate();
 setInterval(checkUpdate, 6 * 3600 * 1000);
 
@@ -541,6 +566,11 @@ async function tick() {
   STATE = {shares: s.shares || [], games: s.games || [], apps: s.apps || []};
   document.getElementById('version').textContent = s.version ? 'v' + s.version : '';
   renderUpdate(s.version);
+
+  // welcome card until anything has ever happened
+  document.getElementById('welcome').style.display =
+    (!STATE.shares.length && !(s.conns||[]).length && !(s.history||[]).length &&
+     !(s.mappings||[]).length && !(s.invites||[]).length) ? '' : 'none';
 
   // step 1: known-games dropdown (filled once)
   const sel = document.getElementById('gameSel');
