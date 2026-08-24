@@ -1,0 +1,46 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo build --release
+      - name: Package
+        run: |
+          mkdir pkg
+          cp target/release/steam-tunnel pkg/
+          cp "$(find target/release -name libsteam_api.so | head -1)" pkg/
+          echo 480 > pkg/steam_appid.txt
+          tar -C pkg -czf steam-tunnel-x86_64-linux.tar.gz .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: steam-tunnel-x86_64-linux.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory pkg | Out-Null
+          Copy-Item target/release/steam-tunnel.exe pkg/
+          $dll = Get-ChildItem target/release -Recurse -Filter steam_api64.dll | Select-Object -First 1
+          if (-not $dll) { throw 'steam_api64.dll not found in build output' }
+          Copy-Item $dll.FullName pkg/
+          Set-Content -Path pkg/steam_appid.txt -Value 480
+          Compress-Archive -Path pkg/* -DestinationPath steam-tunnel-x86_64-windows.zip
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: steam-tunnel-x86_64-windows.zip

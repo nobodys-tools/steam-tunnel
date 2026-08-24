@@ -1,0 +1,27 @@
+[package]
+name = "steam-tunnel"
+version = "0.1.2"
+edition = "2021"
+authors = ["nobodys-tools <164124704+nobodys-tools@users.noreply.github.com>"]
+license = "Apache-2.0"
+description = "Tunnel local TCP ports to Steam friends over Steam P2P networking — no port forwarding, no public IP"
+repository = "https://github.com/nobodys-tools/steam-tunnel"
+
+[dependencies]
+steamworks = { version = "0.13", features = ["raw-bindings"] }
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+getrandom = "0.2"
+open = "5"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", features = ["blocking"] }
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.24"
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+
+[profile.release]
+opt-level = 2

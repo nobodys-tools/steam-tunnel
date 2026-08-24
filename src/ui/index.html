@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>steam-tunnel</title>
+<style>
+  :root {
+    --bg: #14161b; --panel: #1c1f26; --panel2: #23272f; --border: #2e333d;
+    --text: #d7dae0; --muted: #8b919c; --accent: #66c0f4; --ok: #7ec97e; --bad: #e07a7a;
+    --warn: #d8b45a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, sans-serif; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h1 span { color: var(--accent); }
+  h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: .06em; }
+  .status { color: var(--muted); margin-bottom: 20px; }
+  .status b { color: var(--text); }
+  .status .ok { color: var(--ok); } .status .bad { color: var(--bad); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border);
+          border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .card.invite { border-color: var(--warn); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, select { background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+    font: inherit; }
+  input[type=number] { width: 105px; }
+  input.friendpick { min-width: 220px; flex: 1; }
+  button { background: var(--accent); color: #10222e; border: 0; border-radius: 6px;
+    padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:hover { filter: brightness(1.1); }
+  button.small { padding: 3px 10px; font-size: 12px; background: var(--panel2);
+    color: var(--muted); border: 1px solid var(--border); }
+  button.small:hover { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px; }
+  td { padding: 5px 8px; border-top: 1px solid var(--border); }
+  td.num { font-family: ui-monospace, monospace; text-align: right; white-space: nowrap; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+  .tag.in  { background: #24371f; color: var(--ok); }
+  .tag.out { background: #1e2f3f; color: var(--accent); }
+  .tag.hs  { background: #3a3320; color: var(--warn); }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+  .fp-wrap { position: relative; flex: 1; min-width: 220px; display: flex; }
+  .fp-wrap input { width: 100%; }
+  .fp-list { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+    background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+    max-height: 240px; overflow-y: auto; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+  .fp-item { padding: 6px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
+  .fp-item:hover, .fp-item.sel { background: var(--panel); }
+  .fp-item .st { font-size: 12px; }
+  .fp-item .st.on { color: var(--ok); } .fp-item .st.off { color: var(--muted); }
+  .fp-none { padding: 6px 10px; color: var(--muted); font-style: italic; }
+  .hint { color: var(--muted); font-size: 12px; margin: 6px 0 10px; }
+  .hint b { color: var(--text); font-weight: 600; }
+  #log { font-family: ui-monospace, monospace; font-size: 12px; color: var(--muted);
+    max-height: 180px; overflow-y: auto; white-space: pre-wrap; }
+  textarea { width: 100%; height: 70px; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+    font: 13px ui-monospace, monospace; }
+  label { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>steam<span>-tunnel</span></h1>
+  <div class="status" id="status">connecting…</div>
+
+  <div id="invites"></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Share a local port</h2>
+      <div class="hint">Make a service running on <b>your</b> machine (game server,
+        web app, SSH …) reachable for friends. They connect with steam-tunnel
+        using this port number.</div>
+      <div class="row">
+        <input type="number" id="sharePort" placeholder="port" min="1" max="65535">
+        <select id="shareProto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+        <button onclick="sharePort()">Share</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input class="friendpick" id="invitePick"
+               placeholder="search friend to invite…">
+      </div>
+      <div class="hint">Pick a friend, then press <b>invite</b> on a shared port —
+        they get a Steam invite and, if their steam-tunnel is running, an accept
+        prompt appears in their web UI.</div>
+      <table id="shares"></table>
+    </div>
+
+    <div class="card">
+      <h2>Connect to a friend's port</h2>
+      <div class="hint"><b>Friend</b>: who is sharing the port (type to search).<br>
+        <b>Their port</b>: the port number your friend shared on <b>their</b>
+        machine — ask them, or accept their invite.<br>
+        <b>Local port</b>: where it shows up on <b>your</b> machine; point your
+        program at <span style="font-family:monospace">localhost:&lt;local port&gt;</span>.
+        Leave empty to use the same number.</div>
+      <div class="row">
+        <input class="friendpick" id="connectPick"
+               placeholder="search friend…">
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input type="number" id="remotePort" placeholder="their port">
+        <input type="number" id="localPort" placeholder="local port">
+        <select id="connectProto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
+        <button onclick="connectPeer()">Connect</button>
+      </div>
+      <table id="mappings"></table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Connections</h2>
+    <table id="conns"></table>
+  </div>
+
+  <div class="card">
+    <h2>Security</h2>
+    <label>Pre-shared key (optional, WireGuard-style). Generate one, copy it,
+      save, and share it with your friend over a private channel — both sides
+      must enter the same key. The key is write-only: it cannot be shown again
+      after saving. Saving with an empty field keeps the current key.</label>
+    <div class="row" style="margin-top:6px">
+      <input type="password" id="psk" placeholder="pre-shared key" style="flex:1">
+      <button class="small" onclick="genPsk()">Generate</button>
+      <button class="small" onclick="togglePsk()">Show</button>
+      <button class="small" onclick="copyPsk()">Copy</button>
+      <button class="small" onclick="clearPsk()">Clear key</button>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label>Max send rate per connection, KiB/s (0 = Steam default, ~1024).
+        Applies to new connections.</label>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <input type="number" id="sendRate" placeholder="0" min="0" max="1048576" style="width:130px">
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label>SteamID64 allowlist — one per line, <span style="font-family:monospace"># name</span>
+        comments allowed. <b>Empty = any Steam friend may connect.</b>
+        Non-empty = only these IDs.</label>
+    </div>
+    <textarea id="allowlist" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:6px">
+      <input class="friendpick" id="allowPick"
+             placeholder="search friend to allow…">
+      <button class="small" onclick="addAllow()">Add friend</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="saveSettings()">Save</button>
+      <span id="pskState" style="color:var(--muted);font-size:12px"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div id="log"></div>
+  </div>
+
+  <div style="text-align:center;color:var(--muted);font-size:12px;padding:6px 0 14px">
+    steam-tunnel <span id="version"></span> ·
+    <a href="https://github.com/nobodys-tools/steam-tunnel" style="color:var(--muted)">github</a>
+  </div>
+</div>
+
+<script>
+let settingsDirty = false;
+document.getElementById('psk').addEventListener('input', () => settingsDirty = true);
+document.getElementById('allowlist').addEventListener('input', () => settingsDirty = true);
+document.getElementById('sendRate').addEventListener('input', () => settingsDirty = true);
+
+function fmtBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KiB';
+  if (b < 1073741824) return (b/1048576).toFixed(1) + ' MiB';
+  return (b/1073741824).toFixed(2) + ' GiB';
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+async function post(path, body) {
+  const r = await fetch(path, {method:'POST', body: JSON.stringify(body||{})});
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) alert(j.error || 'request failed');
+  return j.ok;
+}
+
+// ---- friend picker: custom autocomplete over the friends list ----
+let FRIENDS = [];
+function pickedId(inputId) {
+  const el = document.getElementById(inputId);
+  if (el.dataset.sid) return el.dataset.sid;
+  const m = el.value.match(/(\d{17})\s*$/);   // manual SteamID64 paste works too
+  return m ? m[1] : null;
+}
+function pickedName(inputId) {
+  const el = document.getElementById(inputId);
+  return el.dataset.sname || el.value.replace(/\s*—\s*\d{17}\s*$/, '').trim();
+}
+function initPicker(el) {
+  const wrap = document.createElement('span');
+  wrap.className = 'fp-wrap';
+  el.parentNode.insertBefore(wrap, el);
+  wrap.appendChild(el);
+  const list = document.createElement('div');
+  list.className = 'fp-list';
+  list.style.display = 'none';
+  wrap.appendChild(list);
+
+  function render() {
+    const q = el.value.trim().toLowerCase();
+    const hits = FRIENDS.filter(f =>
+      !q || f.name.toLowerCase().includes(q) || f.steam_id.includes(q)).slice(0, 50);
+    list.innerHTML = hits.length
+      ? hits.map(f =>
+          '<div class="fp-item" data-sid="' + f.steam_id + '" data-sname="' + esc(f.name) + '">' +
+          '<span>' + esc(f.name) + '</span>' +
+          '<span class="st ' + (f.online ? 'on">online' : 'off">offline') + '</span></div>').join('')
+      : '<div class="fp-none">' + (FRIENDS.length ? 'no match' : 'loading friends…') + '</div>';
+    list.style.display = 'block';
+  }
+  el.addEventListener('focus', render);
+  el.addEventListener('input', () => {
+    delete el.dataset.sid; delete el.dataset.sname;
+    render();
+  });
+  el.addEventListener('blur', () => setTimeout(() => list.style.display = 'none', 150));
+  list.addEventListener('mousedown', ev => {
+    const item = ev.target.closest('.fp-item');
+    if (!item) return;
+    ev.preventDefault();
+    el.dataset.sid = item.dataset.sid;
+    el.dataset.sname = item.dataset.sname;
+    el.value = item.dataset.sname + ' — ' + item.dataset.sid;
+    list.style.display = 'none';
+  });
+}
+['invitePick', 'connectPick', 'allowPick'].forEach(id =>
+  initPicker(document.getElementById(id)));
+
+function sharePort() {
+  const p = document.getElementById('sharePort').value;
+  const udp = document.getElementById('shareProto').value === 'udp';
+  if (p) post('/api/share', {port: +p, udp: udp});
+}
+function invite(port, udp) {
+  const peer = pickedId('invitePick');
+  if (!peer) { alert('Pick a friend in the search box above first.'); return; }
+  post('/api/invite', {peer: peer, port: port, udp: udp});
+}
+function connectPeer() {
+  const peer = pickedId('connectPick');
+  if (!peer) { alert('Pick a friend from the search box first.'); return; }
+  const rp = document.getElementById('remotePort').value;
+  if (!rp) { alert('Enter the port your friend shared.'); return; }
+  const lp = document.getElementById('localPort').value;
+  const udp = document.getElementById('connectProto').value === 'udp';
+  post('/api/connect', {peer: peer, remote_port: +rp, local_port: lp ? +lp : +rp, udp: udp});
+}
+function acceptInvite(inv) {
+  post('/api/connect', {peer: inv.from, remote_port: inv.port, local_port: inv.port, udp: !!inv.udp})
+    .then(ok => { if (ok) post('/api/dismiss_invite', {id: inv.id}); });
+}
+
+function genPsk() {
+  const a = new Uint8Array(24);
+  crypto.getRandomValues(a);
+  const s = btoa(String.fromCharCode(...a))
+    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+  const el = document.getElementById('psk');
+  el.type = 'text';
+  el.value = s;
+  settingsDirty = true;
+}
+function togglePsk() {
+  const el = document.getElementById('psk');
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+function copyPsk() {
+  navigator.clipboard.writeText(document.getElementById('psk').value);
+}
+function addAllow() {
+  const id = pickedId('allowPick');
+  if (!id) { alert('Pick a friend in the search box first.'); return; }
+  const ta = document.getElementById('allowlist');
+  if (ta.value.includes(id)) return;
+  ta.value = (ta.value.trim() ? ta.value.trim() + '\n' : '') +
+    id + ' # ' + pickedName('allowPick');
+  settingsDirty = true;
+  document.getElementById('allowPick').value = '';
+}
+function saveSettings(clearPsk) {
+  const body = {
+    allowlist: document.getElementById('allowlist').value
+      .split('\n').map(s => s.trim()).filter(Boolean),
+    send_rate_kib: +document.getElementById('sendRate').value || 0,
+  };
+  const psk = document.getElementById('psk').value;
+  if (clearPsk) body.clear_psk = true;
+  else if (psk) body.psk = psk;   // empty field = keep the stored key
+  post('/api/settings', body).then(ok => {
+    if (ok) {
+      settingsDirty = false;
+      const el = document.getElementById('psk');
+      el.value = ''; el.type = 'password';
+    }
+  });
+}
+function clearPsk() {
+  if (confirm('Remove the pre-shared key? Peers will connect with SteamID auth only.'))
+    saveSettings(true);
+}
+function proto(udp) {
+  return '<span class="tag ' + (udp ? 'hs' : 'out') + '">' + (udp ? 'udp' : 'tcp') + '</span>';
+}
+
+async function tick() {
+  let s;
+  try { s = await (await fetch('/api/state')).json(); }
+  catch (e) {
+    document.getElementById('status').innerHTML =
+      '<span class="bad">web UI lost contact with steam-tunnel</span>';
+    return;
+  }
+
+  const st = document.getElementById('status');
+  if (s.steam_ok) {
+    st.innerHTML = 'Steam: <span class="ok">connected</span> as <b>' + esc(s.me.name) +
+      '</b> <span style="font-family:monospace">(' + esc(s.me.steam_id) + ')</span>' +
+      ' — auth: ' + (s.psk_set ? '<span class="ok">PSK + ' : '<span>') +
+      (s.allowlist.length ? 'allowlist (' + s.allowlist.length + ')' : 'friends-only') + '</span>';
+  } else {
+    st.innerHTML = 'Steam: <span class="bad">' + esc(s.steam_error || 'not connected') + '</span>';
+  }
+
+  FRIENDS = s.friends || [];
+  document.getElementById('version').textContent = s.version ? 'v' + s.version : '';
+
+  document.getElementById('invites').innerHTML = (s.invites||[]).map(inv =>
+    '<div class="card invite"><div class="row"><span><b>' + esc(inv.from_name) +
+    '</b> invites you to connect to ' + (inv.udp ? 'UDP' : 'TCP') + ' port <b>' + inv.port +
+    '</b> on their machine (appears at localhost:' + inv.port + ' for you)</span>' +
+    '<button onclick=\'acceptInvite(' + JSON.stringify({id:inv.id, from:inv.from, port:inv.port, udp:!!inv.udp}) + ')\'>Accept</button>' +
+    '<button class="small" onclick="post(\'/api/dismiss_invite\',{id:' + inv.id + '})">Dismiss</button>' +
+    '</div></div>').join('');
+
+  document.getElementById('shares').innerHTML = (s.shares||[]).length
+    ? s.shares.map(x =>
+        '<tr><td>' + proto(x.udp) + ' localhost:' + x.port + ' → friends</td><td style="text-align:right">' +
+        '<button class="small" onclick="invite(' + x.port + ',' + !!x.udp + ')">invite</button> ' +
+        '<button class="small" onclick="post(\'/api/unshare\',{port:' + x.port + ',udp:' + !!x.udp + '})">stop</button>' +
+        '</td></tr>').join('')
+    : '<tr><td class="empty">nothing shared</td></tr>';
+
+  document.getElementById('mappings').innerHTML = (s.mappings||[]).length
+    ? s.mappings.map(m =>
+        '<tr><td>' + proto(m.udp) + ' localhost:' + m.local_port + ' → ' + esc(m.peer_name) + ':' + m.remote_port +
+        '</td><td style="text-align:right">' +
+        '<button class="small" onclick="post(\'/api/stop_mapping\',{id:' + m.id + '})">stop</button>' +
+        '</td></tr>').join('')
+    : '<tr><td class="empty">no mappings</td></tr>';
+
+  const conns = s.conns || [];
+  document.getElementById('conns').innerHTML =
+    '<tr><th>dir</th><th>proto</th><th>peer</th><th>ver</th><th>port</th><th>state</th>' +
+    '<th style="text-align:right">up</th><th style="text-align:right">down</th>' +
+    '<th style="text-align:right">rate ↑</th><th style="text-align:right">rate ↓</th>' +
+    '<th style="text-align:right">age</th></tr>' +
+    (conns.length ? conns.map(c =>
+      '<tr><td><span class="tag ' + c.dir + '">' + c.dir + '</span></td>' +
+      '<td>' + (c.udp ? 'udp' : 'tcp') + '</td>' +
+      '<td>' + esc(c.peer_name) + '</td>' +
+      '<td style="color:var(--muted)">' + (c.peer_version ? 'v' + esc(c.peer_version) : '—') + '</td>' +
+      '<td class="num">' + c.port + '</td>' +
+      '<td>' + (c.state === 'active' ? c.state : '<span class="tag hs">handshake</span>') + '</td>' +
+      '<td class="num">' + fmtBytes(c.tx_bytes) + '</td>' +
+      '<td class="num">' + fmtBytes(c.rx_bytes) + '</td>' +
+      '<td class="num">' + fmtBytes(c.tx_rate) + '/s</td>' +
+      '<td class="num">' + fmtBytes(c.rx_rate) + '/s</td>' +
+      '<td class="num">' + c.age_secs + 's</td></tr>').join('')
+    : '<tr><td class="empty" colspan="11">no active connections</td></tr>');
+
+  if (!settingsDirty) {
+    document.getElementById('allowlist').value = (s.allowlist||[]).join('\n');
+    document.getElementById('sendRate').value = s.send_rate_kib || 0;
+    document.getElementById('psk').placeholder =
+      s.psk_set ? '(a key is set — hidden; type to replace it)' : 'pre-shared key';
+    document.getElementById('pskState').textContent = s.psk_set
+      ? 'a key is set (write-only, cannot be shown) — empty field keeps it'
+      : 'no key set — SteamID auth only';
+  }
+
+  const log = document.getElementById('log');
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 5;
+  log.textContent = (s.log||[]).join('\n');
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+setInterval(tick, 1000);
+tick();
+</script>
+</body>
+</html>
