@@ -683,13 +683,20 @@ fn run_engine(client: Client, shared: &Shared) {
             if refresh_friends {
                 last_friends = Instant::now();
                 for f in client.friends().get_friends(FriendFlags::IMMEDIATE) {
+                    let in_tunnel = f
+                        .game_played()
+                        .map(|g| g.game.app_id().0 == 480)
+                        .unwrap_or(false);
                     friends_rows.push(FriendRow {
                         name: f.name(),
                         steam_id: f.id().raw().to_string(),
                         online: !matches!(f.state(), steamworks::FriendState::Offline),
+                        in_tunnel,
                     });
                 }
-                friends_rows.sort_by(|a, b| (!a.online, &a.name).cmp(&(!b.online, &b.name)));
+                friends_rows.sort_by(|a, b| {
+                    (!a.in_tunnel, !a.online, &a.name).cmp(&(!b.in_tunnel, !b.online, &b.name))
+                });
             }
 
             let mut s = shared.lock().unwrap();

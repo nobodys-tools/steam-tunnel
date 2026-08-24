@@ -74,6 +74,8 @@ pub struct FriendRow {
     pub name: String,
     pub steam_id: String,
     pub online: bool,
+    /// currently in App ID 480, i.e. very likely running steam-tunnel
+    pub in_tunnel: bool,
 }
 
 #[derive(Clone, Serialize)]

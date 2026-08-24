@@ -74,6 +74,14 @@
 
   <div id="invites"></div>
 
+  <div class="card" id="tunnelFriendsCard" style="display:none">
+    <h2>Friends running steam-tunnel now</h2>
+    <div class="hint">These friends are in App ID 480 right now — most likely
+      with steam-tunnel open, ready to receive an invite or accept a
+      connection.</div>
+    <table id="tunnelFriends"></table>
+  </div>
+
   <div class="grid">
     <div class="card">
       <h2>Share a local port</h2>
@@ -222,7 +230,8 @@ function initPicker(el) {
       ? hits.map(f =>
           '<div class="fp-item" data-sid="' + f.steam_id + '" data-sname="' + esc(f.name) + '">' +
           '<span>' + esc(f.name) + '</span>' +
-          '<span class="st ' + (f.online ? 'on">online' : 'off">offline') + '</span></div>').join('')
+          '<span class="st ' + (f.in_tunnel ? 'on">in steam-tunnel'
+            : f.online ? 'on">online' : 'off">offline') + '</span></div>').join('')
       : '<div class="fp-none">' + (FRIENDS.length ? 'no match' : 'loading friends…') + '</div>';
     list.style.display = 'block';
   }
@@ -263,6 +272,19 @@ function connectPeer() {
   const lp = document.getElementById('localPort').value;
   const udp = document.getElementById('connectProto').value === 'udp';
   post('/api/connect', {peer: peer, remote_port: +rp, local_port: lp ? +lp : +rp, udp: udp});
+}
+// quick actions from the "running steam-tunnel now" list
+function inviteDirect(sid, name, port, udp) {
+  post('/api/invite', {peer: sid, port: port, udp: udp});
+}
+function pickFriend(sid, name) {
+  for (const id of ['connectPick', 'invitePick']) {
+    const el = document.getElementById(id);
+    el.value = name + ' — ' + sid;
+    el.dataset.sid = sid;
+    el.dataset.sname = name;
+  }
+  document.getElementById('remotePort').focus();
 }
 function acceptInvite(inv) {
   post('/api/connect', {peer: inv.from, remote_port: inv.port, local_port: inv.port, udp: !!inv.udp})
@@ -342,6 +364,19 @@ async function tick() {
 
   FRIENDS = s.friends || [];
   document.getElementById('version').textContent = s.version ? 'v' + s.version : '';
+
+  const inTunnel = FRIENDS.filter(f => f.in_tunnel);
+  const tfCard = document.getElementById('tunnelFriendsCard');
+  tfCard.style.display = inTunnel.length ? '' : 'none';
+  document.getElementById('tunnelFriends').innerHTML = inTunnel.map(f => {
+    const shareBtns = (s.shares||[]).map(x =>
+      '<button class="small" onclick="inviteDirect(\'' + f.steam_id + '\',\'' + esc(f.name) +
+      '\',' + x.port + ',' + !!x.udp + ')">invite to :' + x.port + '</button>').join(' ');
+    return '<tr><td><b>' + esc(f.name) + '</b> <span class="tag in">in steam-tunnel</span></td>' +
+      '<td style="text-align:right">' + shareBtns +
+      ' <button class="small" onclick="pickFriend(\'' + f.steam_id + '\',\'' + esc(f.name) +
+      '\')">connect…</button></td></tr>';
+  }).join('');
 
   document.getElementById('invites').innerHTML = (s.invites||[]).map(inv =>
     '<div class="card invite"><div class="row"><span><b>' + esc(inv.from_name) +
