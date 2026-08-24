@@ -1,0 +1,53 @@
+# Known games and the ports they need for direct/LAN multiplayer.
+# Sharing a game in the UI opens ALL of its ports in one click.
+#
+# You can add your own: create a games.yaml next to steam-tunnel.json with
+# the same format — entries there are added to (and override) this list.
+#
+#   - name: My Game        # shown in the UI
+#     ports: ["7777/tcp"]  # every port the game needs, "port/tcp" or "port/udp"
+
+- name: Terraria
+  ports: ["7777/tcp"]
+- name: Minecraft (Java)
+  ports: ["25565/tcp"]
+- name: Minecraft (Bedrock)
+  ports: ["19132/udp"]
+- name: Valheim
+  ports: ["2456/udp", "2457/udp"]
+- name: Factorio
+  ports: ["34197/udp"]
+- name: Stardew Valley
+  ports: ["24642/udp"]
+- name: Don't Starve Together
+  ports: ["10999/udp"]
+- name: Project Zomboid
+  ports: ["16261/udp", "16262/udp"]
+- name: 7 Days to Die
+  ports: ["26900/tcp", "26900/udp", "26901/udp", "26902/udp"]
+- name: Satisfactory
+  ports: ["7777/udp", "7777/tcp"]
+- name: Palworld
+  ports: ["8211/udp"]
+- name: Enshrouded
+  ports: ["15636/udp", "15637/udp"]
+- name: V Rising
+  ports: ["9876/udp", "9877/udp"]
+- name: Sons of the Forest
+  ports: ["8766/udp", "27016/udp"]
+- name: ARK Survival Evolved
+  ports: ["7777/udp", "7778/udp", "27015/udp"]
+- name: Unturned
+  ports: ["27015/udp", "27016/udp"]
+- name: Rust
+  ports: ["28015/udp"]
+- name: Source dedicated server (GMod, L4D2, TF2)
+  ports: ["27015/udp", "27015/tcp"]
+- name: Barotrauma
+  ports: ["27015/udp", "27016/udp"]
+- name: Starbound
+  ports: ["21025/tcp"]
+- name: OpenTTD
+  ports: ["3979/tcp", "3979/udp"]
+- name: Veloren
+  ports: ["14004/tcp"]

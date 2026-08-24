@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod detect;
 mod engine;
 mod http;
 mod state;

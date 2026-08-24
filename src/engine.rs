@@ -11,9 +11,10 @@ use steamworks::networking_types::{
 };
 use steamworks::{Client, FriendFlags, SteamId};
 
+use crate::detect;
 use crate::state::{
-    append_history, Command, ConnRow, FriendRow, HistoryRow, InviteRow, MappingRow, Shared,
-    ShareRow, HISTORY_KEEP,
+    append_history, AppRow, Command, ConnRow, FriendRow, HistoryRow, InviteRow, MappingRow,
+    Shared, ShareRow, HISTORY_KEEP,
 };
 
 const CHUNK: usize = 16 * 1024;
@@ -426,6 +427,11 @@ fn run_engine(client: Client, shared: &Shared) {
         client.register_callback(move |req: RichPresenceJoinRequested| {
             queue.lock().unwrap().push(req);
         })
+    };
+
+    let (ui_port, games) = {
+        let s = shared.lock().unwrap();
+        (s.config.ui_port, s.snapshot.games.clone())
     };
 
     let me_id = client.user().steam_id();
@@ -950,8 +956,24 @@ fn run_engine(client: Client, shared: &Shared) {
 
             let refresh_friends = last_friends.elapsed() > Duration::from_secs(5);
             let mut friends_rows = Vec::new();
+            let mut app_rows: Vec<AppRow> = Vec::new();
             if refresh_friends {
                 last_friends = Instant::now();
+                for a in detect::listening_ports() {
+                    if a.port == ui_port {
+                        continue;
+                    }
+                    let game = games
+                        .iter()
+                        .find(|g| g.ports.iter().any(|p| p.port == a.port && p.udp == a.udp))
+                        .map(|g| g.name.clone());
+                    app_rows.push(AppRow { process: a.process, port: a.port, udp: a.udp, game });
+                }
+                // games first, then named processes, nameless noise last
+                app_rows.sort_by(|a, b| {
+                    (a.game.is_none(), a.process.is_empty(), &a.process, a.port)
+                        .cmp(&(b.game.is_none(), b.process.is_empty(), &b.process, b.port))
+                });
                 for f in client.friends().get_friends(FriendFlags::IMMEDIATE) {
                     let in_tunnel = f
                         .game_played()
@@ -972,6 +994,7 @@ fn run_engine(client: Client, shared: &Shared) {
             let mut s = shared.lock().unwrap();
             if refresh_friends {
                 s.snapshot.friends = friends_rows;
+                s.snapshot.apps = app_rows;
             }
             s.snapshot.relay_status = "relay access requested".into();
             s.snapshot.invites = invites.clone();

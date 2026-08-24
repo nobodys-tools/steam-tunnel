@@ -82,6 +82,74 @@ pub struct SelfInfo {
     pub steam_id: String,
 }
 
+/// A local program with a listening port (from detect.rs), possibly matched
+/// to a known game from games.yaml.
+#[derive(Clone, Serialize)]
+pub struct AppRow {
+    pub process: String,
+    pub port: u16,
+    pub udp: bool,
+    /// name from the games list when the port matches
+    pub game: Option<String>,
+}
+
+#[derive(Clone, Serialize, PartialEq)]
+pub struct PortSpec {
+    pub port: u16,
+    pub udp: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct GameRow {
+    pub name: String,
+    pub ports: Vec<PortSpec>,
+}
+
+#[derive(Deserialize)]
+struct GameEntry {
+    name: String,
+    ports: Vec<String>,
+}
+
+const GAMES_YAML: &str = include_str!("games.yaml");
+/// user extensions live next to the config
+pub const USER_GAMES_PATH: &str = "games.yaml";
+
+/// Built-in games list plus the user's games.yaml (same format); user
+/// entries win on name collisions.
+pub fn load_games() -> Vec<GameRow> {
+    fn parse(src: &str) -> Vec<GameRow> {
+        let entries: Vec<GameEntry> = serde_yaml::from_str(src).unwrap_or_default();
+        entries
+            .into_iter()
+            .map(|e| GameRow {
+                name: e.name,
+                ports: e
+                    .ports
+                    .iter()
+                    .filter_map(|p| {
+                        let (port, proto) = p.split_once('/')?;
+                        Some(PortSpec {
+                            port: port.trim().parse().ok()?,
+                            udp: proto.trim().eq_ignore_ascii_case("udp"),
+                        })
+                    })
+                    .collect(),
+            })
+            .filter(|g| !g.ports.is_empty())
+            .collect()
+    }
+    let mut games = parse(GAMES_YAML);
+    if let Ok(user) = std::fs::read_to_string(USER_GAMES_PATH) {
+        for g in parse(&user) {
+            games.retain(|x| x.name != g.name);
+            games.push(g);
+        }
+    }
+    games.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    games
+}
+
 #[derive(Clone, Serialize)]
 pub struct FriendRow {
     pub name: String,
@@ -209,6 +277,8 @@ pub struct Snapshot {
     pub relay_status: String,
     pub me: SelfInfo,
     pub friends: Vec<FriendRow>,
+    pub apps: Vec<AppRow>,
+    pub games: Vec<GameRow>,
     pub shares: Vec<ShareRow>,
     pub mappings: Vec<MappingRow>,
     pub conns: Vec<ConnRow>,
@@ -225,6 +295,7 @@ impl Snapshot {
         Snapshot {
             version: env!("CARGO_PKG_VERSION").to_string(),
             history: load_history(),
+            games: load_games(),
             psk_set: !cfg.psk.is_empty(),
             allowlist: cfg.allowlist.clone(),
             send_rate_kib: cfg.send_rate_kib,
