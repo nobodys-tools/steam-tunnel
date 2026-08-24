@@ -231,7 +231,9 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 async function post(path, body) {
-  const r = await fetch(path, {method:'POST', body: JSON.stringify(body||{})});
+  // X-ST marks the request as coming from this page (CSRF guard, see http.rs)
+  const r = await fetch(path, {method:'POST', headers:{'X-ST':'1'},
+                               body: JSON.stringify(body||{})});
   const j = await r.json().catch(() => ({}));
   if (!j.ok) alert(j.error || 'request failed');
   return j.ok;

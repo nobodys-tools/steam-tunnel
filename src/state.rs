@@ -62,9 +62,19 @@ impl Config {
     pub fn save(&self) {
         if let Ok(s) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(CONFIG_PATH, s);
+            restrict_perms(CONFIG_PATH);
         }
     }
 }
+
+/// Config and history hold the PSK and who-connected-when — owner-only.
+#[cfg(unix)]
+fn restrict_perms(path: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+}
+#[cfg(not(unix))]
+fn restrict_perms(_path: &str) {}
 
 #[derive(Clone, Serialize, Default)]
 pub struct SelfInfo {
@@ -164,6 +174,7 @@ pub fn load_history() -> Vec<HistoryRow> {
         }
         let _ = std::fs::write(HISTORY_PATH, out);
     }
+    restrict_perms(HISTORY_PATH);
     rows
 }
 
@@ -176,6 +187,7 @@ pub fn append_history(row: &HistoryRow) {
             .open(HISTORY_PATH)
         {
             let _ = writeln!(f, "{line}");
+            restrict_perms(HISTORY_PATH);
         }
     }
 }

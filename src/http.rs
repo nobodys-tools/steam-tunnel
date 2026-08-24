@@ -30,7 +30,36 @@ pub fn serve(shared: Shared) {
         let url = request.url().to_string();
         let method = request.method().clone();
 
-        let response = match (method, url.as_str()) {
+        // DNS-rebinding guard: a malicious page can point its own hostname at
+        // 127.0.0.1 and read our API from the browser unless we pin the Host.
+        let host_ok = request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("Host"))
+            .map(|h| {
+                let v = h.value.as_str().trim();
+                let bare = v
+                    .strip_suffix(&format!(":{port}"))
+                    .unwrap_or(v);
+                matches!(bare, "127.0.0.1" | "localhost" | "[::1]")
+            })
+            .unwrap_or(false);
+        // CSRF guard: browsers send cross-origin POSTs with "simple" content
+        // types without a preflight — the response is unreadable but the
+        // action would still run. A custom header forces a preflight, which
+        // we never answer, so cross-origin writes die in the browser.
+        let xst_ok = request.headers().iter().any(|h| h.field.equiv("X-ST"));
+
+        let response = if !host_ok {
+            Response::from_string("{\"ok\":false,\"error\":\"bad host\"}")
+                .with_status_code(403)
+                .with_header(json_header())
+        } else if method == Method::Post && !xst_ok {
+            Response::from_string("{\"ok\":false,\"error\":\"missing X-ST header\"}")
+                .with_status_code(403)
+                .with_header(json_header())
+        } else {
+            match (method, url.as_str()) {
             (Method::Get, "/") => Response::from_string(INDEX_HTML).with_header(html_header()),
             (Method::Get, "/api/state") => {
                 let s = shared.lock().unwrap();
@@ -47,7 +76,8 @@ pub fn serve(shared: Shared) {
                         .with_header(json_header()),
                 }
             }
-            _ => Response::from_string("not found").with_status_code(404),
+                _ => Response::from_string("not found").with_status_code(404),
+            }
         };
         let _ = request.respond(response);
     }
