@@ -19,6 +19,32 @@ pub struct Config {
     /// Max Steam send rate per connection in KiB/s. 0 = Steam default (~1 MB/s).
     #[serde(default)]
     pub send_rate_kib: u32,
+    /// Things shared/connected before, offered for one-click reuse. Ports
+    /// are NEVER opened automatically on start — reuse is always a click.
+    #[serde(default)]
+    pub recent_shares: Vec<RecentShare>,
+    #[serde(default)]
+    pub recent_mappings: Vec<RecentMapping>,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecentShare {
+    pub port: u16,
+    pub udp: bool,
+    #[serde(default)]
+    pub target: String,
+    /// game or process name this share belonged to
+    #[serde(default)]
+    pub label: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecentMapping {
+    pub peer: String,
+    pub peer_name: String,
+    pub remote_port: u16,
+    pub local_port: u16,
+    pub udp: bool,
 }
 
 fn default_ui_port() -> u16 {
@@ -32,6 +58,8 @@ impl Default for Config {
             allowlist: Vec::new(),
             ui_port: default_ui_port(),
             send_rate_kib: 0,
+            recent_shares: Vec::new(),
+            recent_mappings: Vec::new(),
         }
     }
 }
@@ -286,6 +314,8 @@ pub struct Snapshot {
     pub conns: Vec<ConnRow>,
     pub history: Vec<HistoryRow>,
     pub invites: Vec<InviteRow>,
+    pub recent_shares: Vec<RecentShare>,
+    pub recent_mappings: Vec<RecentMapping>,
     pub psk_set: bool,
     pub allowlist: Vec<String>,
     pub send_rate_kib: u32,
@@ -298,6 +328,8 @@ impl Snapshot {
             version: env!("CARGO_PKG_VERSION").to_string(),
             history: load_history(),
             games: load_games(),
+            recent_shares: cfg.recent_shares.clone(),
+            recent_mappings: cfg.recent_mappings.clone(),
             psk_set: !cfg.psk.is_empty(),
             allowlist: cfg.allowlist.clone(),
             send_rate_kib: cfg.send_rate_kib,
@@ -307,7 +339,7 @@ impl Snapshot {
 }
 
 pub enum Command {
-    Share { port: u16, udp: bool, target: Option<String> },
+    Share { port: u16, udp: bool, target: Option<String>, label: String },
     Unshare { port: u16, udp: bool },
     Connect { peer: u64, remote_port: u16, local_port: u16, udp: bool },
     StopMapping { id: u64 },

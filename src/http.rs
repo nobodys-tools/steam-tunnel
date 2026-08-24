@@ -122,6 +122,7 @@ fn handle_post(shared: &Shared, path: &str, v: &Value) -> Result<(), &'static st
                 port: get_port(v, "port").ok_or("invalid port")?,
                 udp: get_bool(v, "udp"),
                 target,
+                label: v["label"].as_str().unwrap_or("").trim().to_string(),
             }
         }
         "/api/unshare" => Command::Unshare {

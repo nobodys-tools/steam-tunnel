@@ -129,6 +129,7 @@
       <button onclick="shareSelGame()">Share</button>
     </div>
     <table id="simpleShares" style="margin-top:8px"></table>
+    <div id="recentShares" class="row" style="margin-top:8px"></div>
   </div>
 
   <div class="card simp steps">
@@ -143,6 +144,7 @@
       yet? <button class="small" onclick="copyFriendText(this)">Copy install
       message</button> and send it via Steam chat.</div>
     <div id="simpleConns" style="margin-top:10px"></div>
+    <div id="recentMaps" class="row" style="margin-top:8px"></div>
   </div>
 
   <div class="card adv" id="tunnelFriendsCard" style="display:none">
@@ -371,12 +373,25 @@ function shareGame(name) {
   lastLabel = name;
   localStorage.setItem('last-label', name);
   for (const p of g.ports)
-    if (!isShared(p.port, p.udp)) post('/api/share', {port: p.port, udp: !!p.udp});
+    if (!isShared(p.port, p.udp)) post('/api/share', {port: p.port, udp: !!p.udp, label: name});
 }
 function shareApp(port, udp, label) {
   lastLabel = label || '';
   localStorage.setItem('last-label', lastLabel);
-  if (!isShared(port, udp)) post('/api/share', {port: port, udp: !!udp});
+  if (!isShared(port, udp)) post('/api/share', {port: port, udp: !!udp, label: lastLabel});
+}
+function reshare(key) {
+  for (const r of (STATE.recentGroups[key] || [])) {
+    const b = {port: r.port, udp: !!r.udp, label: r.label || ''};
+    if (r.target) b.target = r.target;
+    post('/api/share', b);
+    if (r.label) { lastLabel = r.label; localStorage.setItem('last-label', r.label); }
+  }
+}
+function reconnect(i) {
+  const r = STATE.recentMaps[i];
+  if (r) post('/api/connect',
+    {peer: r.peer, remote_port: r.remote_port, local_port: r.local_port, udp: !!r.udp});
 }
 function shareSelGame() {
   const v = document.getElementById('gameSel').value;
@@ -615,6 +630,29 @@ async function tick() {
         '<tr><td>' + proto(x.udp) + ' :' + x.port + '</td><td style="text-align:right">' +
         '<button class="small" onclick="post(\'/api/unshare\',{port:' + x.port +
         ',udp:' + !!x.udp + '})">stop</button></td></tr>').join('')
+    : '';
+
+  // step 1: one-click re-share of past shares (never opened automatically)
+  STATE.recentGroups = {};
+  for (const r of (s.recent_shares || []).filter(r => !isShared(r.port, r.udp))) {
+    const k = r.label || (':' + r.port);
+    (STATE.recentGroups[k] = STATE.recentGroups[k] || []).push(r);
+  }
+  const rkeys = Object.keys(STATE.recentGroups);
+  document.getElementById('recentShares').innerHTML = rkeys.length
+    ? '<span class="hint" style="margin:0">shared before:</span> ' + rkeys.map(k =>
+        '<button class="small" onclick="reshare(\'' + jsq(k) + '\')">' + esc(k) + '</button>')
+        .join(' ')
+    : '';
+
+  // step 2: rejoin what you connected to before
+  STATE.recentMaps = (s.recent_mappings || []).filter(r =>
+    !(s.mappings || []).some(m => m.peer === r.peer &&
+      m.remote_port === r.remote_port && !!m.udp === !!r.udp));
+  document.getElementById('recentMaps').innerHTML = STATE.recentMaps.length
+    ? '<span class="hint" style="margin:0">rejoin:</span> ' + STATE.recentMaps.map((r, i) =>
+        '<button class="small" onclick="reconnect(' + i + ')">' + esc(r.peer_name) +
+        ' :' + r.remote_port + (r.udp ? '/udp' : '') + '</button>').join(' ')
     : '';
 
   // step 2: who is connected right now

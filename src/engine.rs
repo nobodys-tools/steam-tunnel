@@ -14,7 +14,7 @@ use steamworks::{Client, FriendFlags, SteamId};
 use crate::detect;
 use crate::state::{
     append_history, AppRow, Command, ConnRow, FriendRow, HistoryRow, InviteRow, MappingRow,
-    Shared, ShareRow, HISTORY_KEEP,
+    RecentMapping, RecentShare, Shared, ShareRow, HISTORY_KEEP,
 };
 
 const CHUNK: usize = 16 * 1024;
@@ -461,7 +461,7 @@ fn run_engine(client: Client, shared: &Shared) {
         };
         for cmd in cmds {
             match cmd {
-                Command::Share { port, udp, target } => {
+                Command::Share { port, udp, target, label } => {
                     let target = target.unwrap_or_else(|| format!("127.0.0.1:{port}"));
                     if let Some(existing) = shares.iter().find(|sh| sh.port == port) {
                         if existing.udp != udp {
@@ -474,6 +474,14 @@ fn run_engine(client: Client, shared: &Shared) {
                         Ok(listen) => {
                             let proto = if udp { "udp" } else { "tcp" };
                             log(shared, format!("Sharing {proto} port {port} -> {target}"));
+                            let mut s = shared.lock().unwrap();
+                            let r = RecentShare { port, udp, target: target.clone(), label };
+                            s.config.recent_shares.retain(|x| !(x.port == port && x.udp == udp));
+                            s.config.recent_shares.insert(0, r);
+                            s.config.recent_shares.truncate(10);
+                            s.snapshot.recent_shares = s.config.recent_shares.clone();
+                            s.config.save();
+                            drop(s);
                             shares.push(Share { port, udp, target, listen });
                         }
                         Err(_) => log(shared, format!("Failed to open listen socket for port {port}")),
@@ -491,6 +499,23 @@ fn run_engine(client: Client, shared: &Shared) {
                 Command::Connect { peer, remote_port, local_port, udp } => {
                     let peer_id = SteamId::from_raw(peer);
                     let peer_name = client.friends().get_friend(peer_id).name();
+                    {
+                        let mut s = shared.lock().unwrap();
+                        let r = RecentMapping {
+                            peer: peer.to_string(),
+                            peer_name: peer_name.clone(),
+                            remote_port,
+                            local_port,
+                            udp,
+                        };
+                        s.config
+                            .recent_mappings
+                            .retain(|x| !(x.peer == r.peer && x.remote_port == remote_port && x.udp == udp));
+                        s.config.recent_mappings.insert(0, r);
+                        s.config.recent_mappings.truncate(10);
+                        s.snapshot.recent_mappings = s.config.recent_mappings.clone();
+                        s.config.save();
+                    }
                     if udp {
                         // socket + tunnel are created lazily by the spawn pass below
                         log(
