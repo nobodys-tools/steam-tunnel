@@ -19,6 +19,12 @@ pub struct Config {
     /// Max Steam send rate per connection in KiB/s. 0 = Steam default (~1 MB/s).
     #[serde(default)]
     pub send_rate_kib: u32,
+    /// desktop notification when a friend connects/disconnects
+    #[serde(default = "default_true")]
+    pub notify_events: bool,
+    /// desktop reminder when a share sits unused for an hour
+    #[serde(default = "default_true")]
+    pub notify_idle_shares: bool,
     /// Things shared/connected before, offered for one-click reuse. Ports
     /// are NEVER opened automatically on start — reuse is always a click.
     #[serde(default)]
@@ -51,6 +57,10 @@ fn default_ui_port() -> u16 {
     7788
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -58,6 +68,8 @@ impl Default for Config {
             allowlist: Vec::new(),
             ui_port: default_ui_port(),
             send_rate_kib: 0,
+            notify_events: true,
+            notify_idle_shares: true,
             recent_shares: Vec::new(),
             recent_mappings: Vec::new(),
         }
@@ -319,6 +331,8 @@ pub struct Snapshot {
     pub psk_set: bool,
     pub allowlist: Vec<String>,
     pub send_rate_kib: u32,
+    pub notify_events: bool,
+    pub notify_idle_shares: bool,
     pub log: Vec<String>,
 }
 
@@ -330,6 +344,8 @@ impl Snapshot {
             games: load_games(),
             recent_shares: cfg.recent_shares.clone(),
             recent_mappings: cfg.recent_mappings.clone(),
+            notify_events: cfg.notify_events,
+            notify_idle_shares: cfg.notify_idle_shares,
             psk_set: !cfg.psk.is_empty(),
             allowlist: cfg.allowlist.clone(),
             send_rate_kib: cfg.send_rate_kib,
@@ -346,7 +362,13 @@ pub enum Command {
     Invite { peer: u64, ports: Vec<PortSpec>, label: String },
     DismissInvite { id: u64 },
     /// psk: None = keep the current key, Some("") = clear, Some(k) = set
-    SetSettings { psk: Option<String>, allowlist: Vec<String>, send_rate_kib: u32 },
+    SetSettings {
+        psk: Option<String>,
+        allowlist: Vec<String>,
+        send_rate_kib: u32,
+        notify_events: bool,
+        notify_idle_shares: bool,
+    },
 }
 
 pub struct SharedInner {

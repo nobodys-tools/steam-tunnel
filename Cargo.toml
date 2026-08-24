@@ -19,9 +19,11 @@ open = "5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3", features = ["blocking"] }
+notify-rust = "4"
 
 [target.'cfg(windows)'.dependencies]
 tray-icon = "0.24"
+tauri-winrt-notification = "0.8"
 windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Foundation",

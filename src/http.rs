@@ -189,6 +189,8 @@ fn handle_post(shared: &Shared, path: &str, v: &Value) -> Result<(), &'static st
                 psk,
                 allowlist,
                 send_rate_kib: get_u64(v, "send_rate_kib").unwrap_or(0) as u32,
+                notify_events: v["notify_events"].as_bool().unwrap_or(true),
+                notify_idle_shares: v["notify_idle_shares"].as_bool().unwrap_or(true),
             }
         }
         _ => return Err("unknown endpoint"),

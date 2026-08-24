@@ -3,6 +3,7 @@
 mod detect;
 mod engine;
 mod http;
+mod notify;
 mod state;
 mod tray;
 

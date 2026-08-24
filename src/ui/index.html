@@ -247,6 +247,14 @@
              placeholder="search friend to allow…">
       <button class="small" onclick="addAllow()">Add friend</button>
     </div>
+    <div class="row" style="margin-top:12px">
+      <label><input type="checkbox" id="notifyEvents"> Desktop notification when
+        a friend connects or disconnects</label>
+    </div>
+    <div class="row" style="margin-top:4px">
+      <label><input type="checkbox" id="notifyIdle"> Remind me when a share sits
+        unused for an hour (exposed ports are easy to forget)</label>
+    </div>
     <div class="row" style="margin-top:8px">
       <button onclick="saveSettings()">Save</button>
       <span id="pskState" style="color:var(--muted);font-size:12px"></span>
@@ -269,6 +277,8 @@ let settingsDirty = false;
 document.getElementById('psk').addEventListener('input', () => settingsDirty = true);
 document.getElementById('allowlist').addEventListener('input', () => settingsDirty = true);
 document.getElementById('sendRate').addEventListener('input', () => settingsDirty = true);
+document.getElementById('notifyEvents').addEventListener('change', () => settingsDirty = true);
+document.getElementById('notifyIdle').addEventListener('change', () => settingsDirty = true);
 
 function fmtBytes(b) {
   if (b < 1024) return b + ' B';
@@ -483,6 +493,8 @@ function saveSettings(clearPsk) {
     allowlist: document.getElementById('allowlist').value
       .split('\n').map(s => s.trim()).filter(Boolean),
     send_rate_kib: +document.getElementById('sendRate').value || 0,
+    notify_events: document.getElementById('notifyEvents').checked,
+    notify_idle_shares: document.getElementById('notifyIdle').checked,
   };
   const psk = document.getElementById('psk').value;
   if (clearPsk) body.clear_psk = true;
@@ -758,6 +770,8 @@ async function tick() {
   if (!settingsDirty) {
     document.getElementById('allowlist').value = (s.allowlist||[]).join('\n');
     document.getElementById('sendRate').value = s.send_rate_kib || 0;
+    document.getElementById('notifyEvents').checked = !!s.notify_events;
+    document.getElementById('notifyIdle').checked = !!s.notify_idle_shares;
     document.getElementById('psk').placeholder =
       s.psk_set ? '(a key is set — hidden; type to replace it)' : 'pre-shared key';
     document.getElementById('pskState').textContent = s.psk_set

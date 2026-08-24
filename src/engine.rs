@@ -252,6 +252,8 @@ struct Tunnel {
     ping_ms: i32,
     /// worst of local/remote packet delivery rate, 0..1; -1 = unknown
     quality: f32,
+    /// "friend connected" notification fired for this tunnel
+    notified_active: bool,
     tx_bytes: u64,
     rx_bytes: u64,
     tx_rate: u64,
@@ -305,6 +307,7 @@ fn new_tunnel(
         idle_since: Instant::now(),
         ping_ms: -1,
         quality: -1.0,
+        notified_active: false,
         tx_bytes: 0,
         rx_bytes: 0,
         tx_rate: 0,
@@ -321,7 +324,13 @@ struct Share {
     /// forward target ("host:port"); resolved per stream so DNS/mDNS
     /// names keep working when addresses change
     target: String,
+    /// game or app name, for notifications and the UI
+    label: String,
     listen: ListenSocket,
+    /// when an incoming tunnel was last alive on this share
+    last_conn: Instant,
+    /// idle reminder already sent for the current idle period
+    reminded: bool,
 }
 
 struct Mapping {
@@ -450,13 +459,15 @@ fn run_engine(client: Client, shared: &Shared) {
         client.run_callbacks();
 
         // ---- commands from the web UI ----
-        let (cmds, psk, allowlist, rate) = {
+        let (cmds, psk, allowlist, rate, notify_events, notify_idle) = {
             let mut s = shared.lock().unwrap();
             (
                 std::mem::take(&mut s.commands),
                 s.config.psk.clone(),
                 s.config.allowlist_ids(),
                 s.config.send_rate_kib,
+                s.config.notify_events,
+                s.config.notify_idle_shares,
             )
         };
         for cmd in cmds {
@@ -475,14 +486,22 @@ fn run_engine(client: Client, shared: &Shared) {
                             let proto = if udp { "udp" } else { "tcp" };
                             log(shared, format!("Sharing {proto} port {port} -> {target}"));
                             let mut s = shared.lock().unwrap();
-                            let r = RecentShare { port, udp, target: target.clone(), label };
+                            let r = RecentShare { port, udp, target: target.clone(), label: label.clone() };
                             s.config.recent_shares.retain(|x| !(x.port == port && x.udp == udp));
                             s.config.recent_shares.insert(0, r);
                             s.config.recent_shares.truncate(10);
                             s.snapshot.recent_shares = s.config.recent_shares.clone();
                             s.config.save();
                             drop(s);
-                            shares.push(Share { port, udp, target, listen });
+                            shares.push(Share {
+                                port,
+                                udp,
+                                target,
+                                label,
+                                listen,
+                                last_conn: Instant::now(),
+                                reminded: false,
+                            });
                         }
                         Err(_) => log(shared, format!("Failed to open listen socket for port {port}")),
                     }
@@ -602,7 +621,13 @@ fn run_engine(client: Client, shared: &Shared) {
                 Command::DismissInvite { id } => {
                     invites.retain(|i| i.id != id);
                 }
-                Command::SetSettings { psk, allowlist, send_rate_kib } => {
+                Command::SetSettings {
+                    psk,
+                    allowlist,
+                    send_rate_kib,
+                    notify_events,
+                    notify_idle_shares,
+                } => {
                     let rate_changed = {
                         let mut s = shared.lock().unwrap();
                         let changed = s.config.send_rate_kib != send_rate_kib;
@@ -611,25 +636,37 @@ fn run_engine(client: Client, shared: &Shared) {
                         }
                         s.config.allowlist = allowlist;
                         s.config.send_rate_kib = send_rate_kib;
+                        s.config.notify_events = notify_events;
+                        s.config.notify_idle_shares = notify_idle_shares;
                         s.config.save();
                         s.snapshot.psk_set = !s.config.psk.is_empty();
                         s.snapshot.allowlist = s.config.allowlist.clone();
                         s.snapshot.send_rate_kib = send_rate_kib;
+                        s.snapshot.notify_events = notify_events;
+                        s.snapshot.notify_idle_shares = notify_idle_shares;
                         changed
                     };
                     // listen sockets carry the rate config; recreate them so
                     // new incoming tunnels pick up the new rate
                     if rate_changed {
-                        let old: Vec<(u16, bool, String)> = shares
+                        let old: Vec<(u16, bool, String, String)> = shares
                             .iter()
-                            .map(|sh| (sh.port, sh.udp, sh.target.clone()))
+                            .map(|sh| (sh.port, sh.udp, sh.target.clone(), sh.label.clone()))
                             .collect();
                         shares.clear();
-                        for (port, udp, target) in old {
+                        for (port, udp, target, label) in old {
                             if let Ok(listen) = sockets
                                 .create_listen_socket_p2p(port as i32, conn_options(send_rate_kib))
                             {
-                                shares.push(Share { port, udp, target, listen });
+                                shares.push(Share {
+                                    port,
+                                    udp,
+                                    target,
+                                    label,
+                                    listen,
+                                    last_conn: Instant::now(),
+                                    reminded: false,
+                                });
                             }
                         }
                         log(shared, "Send rate updated (applies to new tunnels)".into());
@@ -928,6 +965,25 @@ fn run_engine(client: Client, shared: &Shared) {
             {
                 t.mark_dead("idle");
             }
+            // a friend's tunnel to one of our shares just finished its handshake
+            if t.dir == Dir::In && matches!(t.state, ConnState::Active) && !t.notified_active {
+                t.notified_active = true;
+                if notify_events {
+                    let who = client.friends().get_friend(t.peer).name();
+                    let what = shares
+                        .iter()
+                        .find(|sh| sh.port == t.port && sh.udp == t.udp)
+                        .map(|sh| {
+                            if sh.label.is_empty() {
+                                format!("port {}", sh.port)
+                            } else {
+                                sh.label.clone()
+                            }
+                        })
+                        .unwrap_or_else(|| format!("port {}", t.port));
+                    crate::notify::notify("steam-tunnel", &format!("{who} connected to {what}"));
+                }
+            }
         }
         for m in log_msgs {
             log(shared, m);
@@ -969,6 +1025,15 @@ fn run_engine(client: Client, shared: &Shared) {
                 if reason != "idle" || t.streams_served > 0 {
                     log(shared, format!("Tunnel {} closed: {reason}", t.id));
                 }
+                // "share removed" is our own action — no need to be told
+                if t.dir == Dir::In && t.notified_active && notify_events && reason != "share removed"
+                {
+                    let who = client.friends().get_friend(t.peer).name();
+                    crate::notify::notify(
+                        "steam-tunnel",
+                        &format!("{who} disconnected (port {})", t.port),
+                    );
+                }
                 let row = HistoryRow {
                     ts: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1008,6 +1073,31 @@ fn run_engine(client: Client, shared: &Shared) {
         if last_stats.elapsed() > Duration::from_secs(1) {
             let dt = last_stats.elapsed().as_secs_f64();
             last_stats = Instant::now();
+
+            // remind about shares nobody has used for an hour — exposed
+            // ports are easy to forget. One reminder per idle period.
+            for sh in shares.iter_mut() {
+                let in_use = tunnels
+                    .iter()
+                    .any(|t| t.dir == Dir::In && t.port == sh.port && t.udp == sh.udp && t.dead.is_none());
+                if in_use {
+                    sh.last_conn = Instant::now();
+                    sh.reminded = false;
+                } else if !sh.reminded && sh.last_conn.elapsed() >= Duration::from_secs(3600) {
+                    sh.reminded = true;
+                    if notify_idle {
+                        let what = if sh.label.is_empty() {
+                            format!("Port {}", sh.port)
+                        } else {
+                            format!("{} (port {})", sh.label, sh.port)
+                        };
+                        crate::notify::notify(
+                            "steam-tunnel",
+                            &format!("{what} is still shared but nobody has connected for an hour — stop sharing if you're done."),
+                        );
+                    }
+                }
+            }
             for t in tunnels.iter_mut() {
                 t.tx_rate = ((t.tx_bytes - t.last_tx) as f64 / dt) as u64;
                 t.rx_rate = ((t.rx_bytes - t.last_rx) as f64 / dt) as u64;
