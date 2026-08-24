@@ -110,6 +110,8 @@ pub struct ConnRow {
     pub peer_version: String,
     pub port: u16,
     pub state: String,
+    /// live streams (TCP connections / UDP flows) multiplexed on this tunnel
+    pub streams: u64,
     /// Steam round-trip time in ms; -1 = not measured yet
     pub ping_ms: i32,
     /// worst-direction packet delivery rate, 0..1; -1 = unknown
@@ -135,6 +137,9 @@ pub struct HistoryRow {
     pub duration_secs: u64,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
+    /// total streams (TCP connections / UDP flows) the tunnel carried
+    #[serde(default)]
+    pub streams: u64,
     pub reason: String,
 }
 

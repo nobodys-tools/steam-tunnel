@@ -493,6 +493,7 @@ async function tick() {
   const conns = s.conns || [];
   document.getElementById('conns').innerHTML =
     '<tr><th>dir</th><th>proto</th><th>peer</th><th>ver</th><th>port</th><th>state</th>' +
+    '<th style="text-align:right" title="TCP connections / UDP flows sharing this tunnel">streams</th>' +
     '<th style="text-align:right">ping</th>' +
     '<th style="text-align:right">up</th><th style="text-align:right">down</th>' +
     '<th style="text-align:right">rate ↑</th><th style="text-align:right">rate ↓</th>' +
@@ -504,17 +505,19 @@ async function tick() {
       '<td style="color:var(--muted)">' + (c.peer_version ? 'v' + esc(c.peer_version) : '—') + '</td>' +
       '<td class="num">' + c.port + '</td>' +
       '<td>' + (c.state === 'active' ? c.state : '<span class="tag hs">handshake</span>') + '</td>' +
+      '<td class="num">' + (c.streams ?? 0) + '</td>' +
       pingCell(c) +
       '<td class="num">' + fmtBytes(c.tx_bytes) + '</td>' +
       '<td class="num">' + fmtBytes(c.rx_bytes) + '</td>' +
       '<td class="num">' + fmtBytes(c.tx_rate) + '/s</td>' +
       '<td class="num">' + fmtBytes(c.rx_rate) + '/s</td>' +
       '<td class="num">' + c.age_secs + 's</td></tr>').join('')
-    : '<tr><td class="empty" colspan="12">no active connections</td></tr>');
+    : '<tr><td class="empty" colspan="13">no active connections</td></tr>');
 
   const hist = (s.history || []).slice(-30).reverse();
   document.getElementById('history').innerHTML =
     '<tr><th>ended</th><th>dir</th><th>proto</th><th>peer</th><th>port</th>' +
+    '<th style="text-align:right" title="TCP connections / UDP flows the tunnel carried">streams</th>' +
     '<th style="text-align:right">up</th><th style="text-align:right">down</th>' +
     '<th style="text-align:right">duration</th><th>reason</th></tr>' +
     (hist.length ? hist.map(h =>
@@ -523,11 +526,12 @@ async function tick() {
       '<td>' + (h.udp ? 'udp' : 'tcp') + '</td>' +
       '<td>' + esc(h.peer_name || h.peer) + '</td>' +
       '<td class="num">' + h.port + '</td>' +
+      '<td class="num">' + (h.streams ?? 0) + '</td>' +
       '<td class="num">' + fmtBytes(h.tx_bytes) + '</td>' +
       '<td class="num">' + fmtBytes(h.rx_bytes) + '</td>' +
       '<td class="num">' + fmtDur(h.duration_secs) + '</td>' +
       '<td style="color:var(--muted)">' + esc(h.reason) + '</td></tr>').join('')
-    : '<tr><td class="empty" colspan="9">no connections yet</td></tr>');
+    : '<tr><td class="empty" colspan="10">no connections yet</td></tr>');
 
   if (!settingsDirty) {
     document.getElementById('allowlist').value = (s.allowlist||[]).join('\n');
