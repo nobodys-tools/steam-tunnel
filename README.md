@@ -97,9 +97,9 @@ where it appears on the guest's machine (defaults to the same number).
 
 ## Limitations
 
-- UDP tunnels forward one local program per mapping (the last source address
-  seen), and datagrams larger than ~1150 bytes fall back to Steam's reliable
-  channel, which can add latency for oversized packets.
+- UDP datagrams larger than ~1150 bytes fall back to Steam's reliable
+  channel, which can add latency for oversized packets. A UDP mapping
+  carries up to 64 concurrent flows (distinct local source ports).
 - Steam's default per-connection send-rate ceiling is ~1 MB/s; raise or lower
   it under *Security → Max send rate* (applies to new connections).
 - App ID 480 is Valve's shared test ID; invites show up as "Spacewar" in

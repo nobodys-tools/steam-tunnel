@@ -29,6 +29,12 @@ const UDP_RESPAWN_DELAY: Duration = Duration::from_secs(3);
 /// An outgoing tunnel with no streams left is kept warm this long so the next
 /// local connection skips the Steam connect + handshake round-trips.
 const TUNNEL_LINGER: Duration = Duration::from_secs(120);
+/// UDP flows (one per local source address) die after this much silence;
+/// the next datagram from that source transparently re-opens one.
+const UDP_FLOW_IDLE: Duration = Duration::from_secs(120);
+/// per mapping — a runaway program cycling source ports must not open
+/// unbounded Steam streams
+const MAX_UDP_FLOWS: usize = 64;
 
 const INVITE_PREFIX: &str = "steam-tunnel-v1:";
 
@@ -153,9 +159,10 @@ enum Dir {
 
 enum LocalSock {
     Tcp(TcpStream),
-    /// Host side: socket `connect()`ed to the local service (peer None).
-    /// Client side: socket bound on the local port; peer = the local
-    /// program's address, learned from its first datagram.
+    /// Host side: socket `connect()`ed to the local service, one per flow
+    /// (peer None). Client side: a clone of the mapping's bound socket used
+    /// for replies only; peer = the flow's local source address. Client
+    /// reads happen at the mapping level, which dispatches to flows.
     Udp { sock: UdpSocket, peer: Option<SocketAddr> },
 }
 
@@ -180,6 +187,8 @@ struct Stream {
     wr_shutdown: bool,
     /// peer sent F_CLOSE: stop reading, flush what's buffered, then drop
     reset: bool,
+    /// UDP only: last datagram seen in either direction (flow expiry)
+    last_activity: Instant,
     tx_bytes: u64,
     rx_bytes: u64,
     dead: Option<String>,
@@ -197,6 +206,7 @@ fn new_stream(id: u32, mapping_id: Option<u64>, local: Option<LocalSock>) -> Str
         remote_eof: false,
         wr_shutdown: false,
         reset: false,
+        last_activity: Instant::now(),
         tx_bytes: 0,
         rx_bytes: 0,
         dead: None,
@@ -320,8 +330,10 @@ struct Mapping {
     remote_port: u16,
     local_port: u16,
     udp: bool,
-    /// TCP: local listener. UDP: none — the socket lives in the stream.
+    /// TCP: local listener
     listener: Option<TcpListener>,
+    /// UDP: the bound local socket; every flow replies through a clone of it
+    sock: Option<UdpSocket>,
     last_spawn: Instant,
 }
 
@@ -487,6 +499,7 @@ fn run_engine(client: Client, shared: &Shared) {
                             local_port,
                             udp: true,
                             listener: None,
+                            sock: None,
                             last_spawn: Instant::now() - UDP_RESPAWN_DELAY,
                         });
                         next_id += 1;
@@ -507,6 +520,7 @@ fn run_engine(client: Client, shared: &Shared) {
                                     local_port,
                                     udp: false,
                                     listener: Some(listener),
+                                    sock: None,
                                     last_spawn: Instant::now(),
                                 });
                                 next_id += 1;
@@ -671,48 +685,113 @@ fn run_engine(client: Client, shared: &Shared) {
         // ---- local TCP accepts / UDP stream (re)spawn for outgoing mappings ----
         for m in mappings.iter_mut() {
             if m.udp {
-                let live = tunnels.iter().any(|t| {
-                    t.dead.is_none()
-                        && t.streams
-                            .iter()
-                            .any(|st| st.mapping_id == Some(m.id) && st.dead.is_none())
-                });
-                if !live && m.last_spawn.elapsed() >= UDP_RESPAWN_DELAY {
+                // bind the local socket once; retry with a delay on failure
+                if m.sock.is_none() && m.last_spawn.elapsed() >= UDP_RESPAWN_DELAY {
                     m.last_spawn = Instant::now();
                     let addr: SocketAddr = ([127, 0, 0, 1], m.local_port).into();
                     match UdpSocket::bind(addr) {
                         Ok(sock) => {
                             sock.set_nonblocking(true).ok();
-                            match ensure_out_tunnel(
-                                &mut tunnels,
-                                &sockets,
-                                m.peer,
-                                m.remote_port,
-                                true,
-                                rate,
-                                &mut next_id,
-                            ) {
-                                Some(ti) => {
-                                    let t = &mut tunnels[ti];
-                                    let sid = t.alloc_stream_id();
-                                    let mut st = new_stream(
-                                        sid,
-                                        Some(m.id),
-                                        Some(LocalSock::Udp { sock, peer: None }),
-                                    );
-                                    if matches!(t.state, ConnState::Active) {
-                                        send_rel(&t.steam, &mut t.pending, frame(F_OPEN, sid, &[]));
-                                        st.open_sent = true;
-                                    }
-                                    t.streams.push(st);
-                                    t.streams_served += 1;
-                                }
-                                None => log(shared, "connect_p2p failed".into()),
-                            }
+                            m.sock = Some(sock);
                         }
                         Err(e) => {
                             log(shared, format!("Cannot bind udp localhost:{}: {e}", m.local_port))
                         }
+                    }
+                }
+                // keep a tunnel warm so the handshake is already done when
+                // the local program starts talking
+                let have_tunnel = tunnels.iter().any(|t| {
+                    t.dead.is_none()
+                        && t.dir == Dir::Out
+                        && t.peer == m.peer
+                        && t.port == m.remote_port
+                        && t.udp
+                });
+                if m.sock.is_some() && !have_tunnel && m.last_spawn.elapsed() >= UDP_RESPAWN_DELAY {
+                    m.last_spawn = Instant::now();
+                    if ensure_out_tunnel(
+                        &mut tunnels,
+                        &sockets,
+                        m.peer,
+                        m.remote_port,
+                        true,
+                        rate,
+                        &mut next_id,
+                    )
+                    .is_none()
+                    {
+                        log(shared, "connect_p2p failed".into());
+                    }
+                }
+                // dispatch datagrams: one stream ("flow") per local source
+                // address, so several programs — or several players' game
+                // instances — can use the same mapping at once
+                if let Some(sock) = &m.sock {
+                    let mut buf = [0u8; UDP_BUF + HDR];
+                    buf[0] = F_DATA;
+                    for _ in 0..MAX_DGRAMS_PER_TICK {
+                        let (n, src) = match sock.recv_from(&mut buf[HDR..]) {
+                            Ok(v) => v,
+                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
+                            Err(_) => break,
+                        };
+                        let Some(ti) = tunnels.iter().position(|t| {
+                            t.dead.is_none()
+                                && t.dir == Dir::Out
+                                && t.peer == m.peer
+                                && t.port == m.remote_port
+                                && t.udp
+                        }) else {
+                            continue; // no tunnel yet — UDP tolerates loss
+                        };
+                        let t = &mut tunnels[ti];
+                        let found = t.streams.iter().position(|st| {
+                            st.dead.is_none()
+                                && st.mapping_id == Some(m.id)
+                                && matches!(&st.local,
+                                    Some(LocalSock::Udp { peer: Some(p), .. }) if *p == src)
+                        });
+                        let si = match found {
+                            Some(i) => i,
+                            None => {
+                                let flows = t
+                                    .streams
+                                    .iter()
+                                    .filter(|st| st.mapping_id == Some(m.id))
+                                    .count();
+                                if flows >= MAX_UDP_FLOWS {
+                                    continue;
+                                }
+                                let Ok(clone) = sock.try_clone() else { continue };
+                                let sid = t.alloc_stream_id();
+                                let mut st = new_stream(
+                                    sid,
+                                    Some(m.id),
+                                    Some(LocalSock::Udp { sock: clone, peer: Some(src) }),
+                                );
+                                if matches!(t.state, ConnState::Active) {
+                                    send_rel(&t.steam, &mut t.pending, frame(F_OPEN, sid, &[]));
+                                    st.open_sent = true;
+                                }
+                                t.streams.push(st);
+                                t.streams_served += 1;
+                                t.streams.len() - 1
+                            }
+                        };
+                        let st = &mut t.streams[si];
+                        st.last_activity = Instant::now();
+                        if st.open_sent {
+                            buf[1..HDR].copy_from_slice(&st.id.to_be_bytes());
+                            if t.steam
+                                .send_message(&buf[..n + HDR], data_flags(true, n + HDR))
+                                .is_ok()
+                            {
+                                st.tx_bytes += n as u64;
+                                t.tx_bytes += n as u64;
+                            }
+                        }
+                        // pre-handshake datagrams are dropped — UDP tolerates loss
                     }
                 }
                 continue;
@@ -1046,7 +1125,10 @@ fn pump_tunnel(t: &mut Tunnel, psk: &str, log_msgs: &mut Vec<String>) {
                             }
                             match open_local(&t.target, t.udp) {
                                 Ok(local) => {
-                                    t.streams.push(new_stream(sid, None, Some(local)));
+                                    let mut st = new_stream(sid, None, Some(local));
+                                    // the peer's F_OPEN created it: already open
+                                    st.open_sent = true;
+                                    t.streams.push(st);
                                     t.streams_served += 1;
                                     log_msgs.push(format!(
                                         "Tunnel {}: stream {sid} -> {} open",
@@ -1074,7 +1156,9 @@ fn pump_tunnel(t: &mut Tunnel, psk: &str, log_msgs: &mut Vec<String>) {
                                 && !t.streams.iter().any(|st| st.id == sid)
                             {
                                 if let Ok(local) = open_local(&t.target, true) {
-                                    t.streams.push(new_stream(sid, None, Some(local)));
+                                    let mut st = new_stream(sid, None, Some(local));
+                                    st.open_sent = true;
+                                    t.streams.push(st);
                                     t.streams_served += 1;
                                 }
                             }
@@ -1084,6 +1168,7 @@ fn pump_tunnel(t: &mut Tunnel, psk: &str, log_msgs: &mut Vec<String>) {
                             {
                                 st.rx_bytes += payload.len() as u64;
                                 *tunnel_rx += payload.len() as u64;
+                                st.last_activity = Instant::now();
                                 match st.local.as_mut() {
                                     Some(LocalSock::Tcp(_)) => {
                                         if st.tcp_out.len() + payload.len() > TCP_OUT_CAP {
@@ -1324,44 +1409,36 @@ fn pump_tunnel(t: &mut Tunnel, psk: &str, log_msgs: &mut Vec<String>) {
                     }
                 }
             }
-            Some(LocalSock::Udp { sock, peer }) => {
+            // host side only: per-flow socket connected to the target.
+            // Client-side UDP reads happen at the mapping level.
+            Some(LocalSock::Udp { sock, .. }) if t.dir == Dir::In => {
                 let mut buf = [0u8; UDP_BUF + HDR];
                 buf[0] = F_DATA;
                 buf[1..HDR].copy_from_slice(&st.id.to_be_bytes());
                 for _ in 0..MAX_DGRAMS_PER_TICK {
-                    // host side sockets are connected; client side sockets
-                    // learn the local program's address from its datagrams
-                    let n = if peer.is_some() || t.dir == Dir::Out {
-                        match sock.recv_from(&mut buf[HDR..]) {
-                            Ok((n, src)) => {
-                                *peer = Some(src);
-                                n
-                            }
-                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
-                            Err(_) => break,
-                        }
-                    } else {
-                        match sock.recv(&mut buf[HDR..]) {
-                            Ok(n) => n,
-                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
-                            // ICMP-unreachable surfaces here on connected sockets;
-                            // the service may just not be up yet
-                            Err(_) => break,
-                        }
+                    let n = match sock.recv(&mut buf[HDR..]) {
+                        Ok(n) => n,
+                        Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
+                        // ICMP-unreachable surfaces here on connected sockets;
+                        // the service may just not be up yet
+                        Err(_) => break,
                     };
-                    if st.open_sent || t.dir == Dir::In {
-                        if t.steam
-                            .send_message(&buf[..n + HDR], data_flags(true, n + HDR))
-                            .is_ok()
-                        {
-                            st.tx_bytes += n as u64;
-                            t.tx_bytes += n as u64;
-                        }
+                    st.last_activity = Instant::now();
+                    if t.steam
+                        .send_message(&buf[..n + HDR], data_flags(true, n + HDR))
+                        .is_ok()
+                    {
+                        st.tx_bytes += n as u64;
+                        t.tx_bytes += n as u64;
                     }
-                    // pre-handshake datagrams are dropped — UDP tolerates loss
                 }
             }
             _ => {}
+        }
+
+        // silent UDP flows expire; the next datagram re-opens one
+        if t.udp && st.dead.is_none() && st.last_activity.elapsed() > UDP_FLOW_IDLE {
+            st.mark_dead("flow idle");
         }
 
         // both directions finished and fully flushed -> clean close, no
