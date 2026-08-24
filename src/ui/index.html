@@ -26,6 +26,10 @@
   .card { background: var(--panel); border: 1px solid var(--border);
           border-radius: 8px; padding: 16px; margin-bottom: 16px; }
   .card.invite { border-color: var(--warn); }
+  .card.update { border-color: var(--accent); }
+  code.cmd { background: var(--panel2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font: 12px ui-monospace, monospace;
+    overflow-x: auto; white-space: nowrap; max-width: 100%; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   input, select { background: var(--panel2); color: var(--text);
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
@@ -71,6 +75,21 @@
 <div class="wrap">
   <h1>steam<span>-tunnel</span></h1>
   <div class="status" id="status">connecting…</div>
+
+  <div class="card update" id="updateCard" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <span>⬆ A newer version is out: <b id="updNew"></b> (you have <b id="updCur"></b>).
+        Friends can only connect when both sides run the <b>same</b> version, so
+        update together — just run the install command again:</span>
+      <button class="small" onclick="dismissUpdate()">Dismiss</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <code class="cmd" id="updCmd"></code>
+      <button class="small" onclick="copyUpdCmd()">Copy</button>
+      <a id="updLink" href="https://github.com/nobodys-tools/steam-tunnel/releases/latest"
+         style="color:var(--accent);font-size:12px" target="_blank">what's new</a>
+    </div>
+  </div>
 
   <div id="invites"></div>
 
@@ -351,6 +370,41 @@ function clearPsk() {
   if (confirm('Remove the pre-shared key? Peers will connect with SteamID auth only.'))
     saveSettings(true);
 }
+// ---- update check: compare our version against the latest GitHub release ----
+const INSTALL_CMD = navigator.platform.startsWith('Win')
+  ? 'irm https://raw.githubusercontent.com/nobodys-tools/steam-tunnel/main/install.ps1 | iex'
+  : 'curl -fsSL https://raw.githubusercontent.com/nobodys-tools/steam-tunnel/main/install.sh | sh';
+let LATEST = null;
+function verNewer(a, b) {
+  const pa = String(a).split('.').map(n => +n || 0), pb = String(b).split('.').map(n => +n || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++)
+    if ((pa[i]||0) !== (pb[i]||0)) return (pa[i]||0) > (pb[i]||0);
+  return false;
+}
+async function checkUpdate() {
+  try {
+    const r = await fetch('https://api.github.com/repos/nobodys-tools/steam-tunnel/releases/latest');
+    if (r.ok) LATEST = ((await r.json()).tag_name || '').replace(/^v/, '');
+  } catch (e) { /* offline or rate-limited — retried later */ }
+}
+function renderUpdate(cur) {
+  const card = document.getElementById('updateCard');
+  const show = LATEST && cur && verNewer(LATEST, cur) &&
+    localStorage.getItem('dismissed-update') !== LATEST;
+  card.style.display = show ? '' : 'none';
+  if (!show) return;
+  document.getElementById('updNew').textContent = 'v' + LATEST;
+  document.getElementById('updCur').textContent = 'v' + cur;
+  document.getElementById('updCmd').textContent = INSTALL_CMD;
+}
+function dismissUpdate() {
+  if (LATEST) localStorage.setItem('dismissed-update', LATEST);
+  document.getElementById('updateCard').style.display = 'none';
+}
+function copyUpdCmd() { navigator.clipboard.writeText(INSTALL_CMD); }
+checkUpdate();
+setInterval(checkUpdate, 6 * 3600 * 1000);
+
 function proto(udp) {
   return '<span class="tag ' + (udp ? 'hs' : 'out') + '">' + (udp ? 'udp' : 'tcp') + '</span>';
 }
@@ -376,6 +430,7 @@ async function tick() {
 
   FRIENDS = s.friends || [];
   document.getElementById('version').textContent = s.version ? 'v' + s.version : '';
+  renderUpdate(s.version);
 
   const inTunnel = FRIENDS.filter(f => f.in_tunnel);
   const tfCard = document.getElementById('tunnelFriendsCard');
