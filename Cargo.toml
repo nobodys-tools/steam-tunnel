@@ -1,6 +1,6 @@
 [package]
 name = "steam-tunnel"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["nobodys-tools <164124704+nobodys-tools@users.noreply.github.com>"]
 license = "Apache-2.0"

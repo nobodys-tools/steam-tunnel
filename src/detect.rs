@@ -50,8 +50,27 @@ fn scan() -> Vec<AppPort> {
         }
     }
 
-    // map socket inodes to processes via /proc/*/fd symlinks; unreadable
-    // entries (other users' processes) just lose their name
+    // our own sockets (mapping listeners, web UI) are not "apps" — drop them
+    // via /proc/self/fd, which is readable even inside sandboxes
+    if let Ok(fds) = std::fs::read_dir("/proc/self/fd") {
+        for fd in fds.flatten() {
+            if let Ok(link) = std::fs::read_link(fd.path()) {
+                if let Some(inode) = link
+                    .to_string_lossy()
+                    .strip_prefix("socket:[")
+                    .and_then(|r| r.strip_suffix(']'))
+                    .and_then(|n| n.parse::<u64>().ok())
+                {
+                    inode_port.remove(&inode);
+                }
+            }
+        }
+    }
+
+    // Map socket inodes to processes via /proc/*/fd symlinks. Best-effort:
+    // inside bwrap sandboxes (steam-run on NixOS) reading other processes'
+    // fd links is denied, so entries fall back to nameless — port-based
+    // game matching still works there.
     let me = std::process::id() as u64;
     let mut out = Vec::new();
     let mut seen: std::collections::HashSet<u64> = Default::default();
