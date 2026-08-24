@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 pub const CONFIG_PATH: &str = "steam-tunnel.json";
+pub const HISTORY_PATH: &str = "steam-tunnel-history.jsonl";
+/// entries kept in memory / shown in the UI; the file is trimmed on startup
+pub const HISTORY_KEEP: usize = 500;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -118,6 +121,60 @@ pub struct ConnRow {
     pub age_secs: u64,
 }
 
+/// One closed connection, appended to steam-tunnel-history.jsonl — a
+/// persisted audit trail of who tunneled where, when, and how much.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct HistoryRow {
+    /// unix epoch seconds when the connection ended
+    pub ts: u64,
+    pub dir: String,
+    pub udp: bool,
+    pub peer: String,
+    pub peer_name: String,
+    pub port: u16,
+    pub duration_secs: u64,
+    pub tx_bytes: u64,
+    pub rx_bytes: u64,
+    pub reason: String,
+}
+
+/// Load past entries (last HISTORY_KEEP), trimming the file if it grew.
+pub fn load_history() -> Vec<HistoryRow> {
+    let rows: Vec<HistoryRow> = std::fs::read_to_string(HISTORY_PATH)
+        .map(|s| {
+            s.lines()
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let skip = rows.len().saturating_sub(HISTORY_KEEP);
+    let rows: Vec<HistoryRow> = rows.into_iter().skip(skip).collect();
+    if skip > 0 {
+        let mut out = String::new();
+        for r in &rows {
+            if let Ok(line) = serde_json::to_string(r) {
+                out.push_str(&line);
+                out.push('\n');
+            }
+        }
+        let _ = std::fs::write(HISTORY_PATH, out);
+    }
+    rows
+}
+
+pub fn append_history(row: &HistoryRow) {
+    use std::io::Write;
+    if let Ok(line) = serde_json::to_string(row) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(HISTORY_PATH)
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 pub struct InviteRow {
     pub id: u64,
@@ -138,6 +195,7 @@ pub struct Snapshot {
     pub shares: Vec<ShareRow>,
     pub mappings: Vec<MappingRow>,
     pub conns: Vec<ConnRow>,
+    pub history: Vec<HistoryRow>,
     pub invites: Vec<InviteRow>,
     pub psk_set: bool,
     pub allowlist: Vec<String>,
@@ -149,6 +207,7 @@ impl Snapshot {
     fn default_with(cfg: &Config) -> Snapshot {
         Snapshot {
             version: env!("CARGO_PKG_VERSION").to_string(),
+            history: load_history(),
             psk_set: !cfg.psk.is_empty(),
             allowlist: cfg.allowlist.clone(),
             send_rate_kib: cfg.send_rate_kib,

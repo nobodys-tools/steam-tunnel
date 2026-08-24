@@ -11,7 +11,10 @@ use steamworks::networking_types::{
 };
 use steamworks::{Client, FriendFlags, SteamId};
 
-use crate::state::{Command, ConnRow, FriendRow, InviteRow, MappingRow, Shared, ShareRow};
+use crate::state::{
+    append_history, Command, ConnRow, FriendRow, HistoryRow, InviteRow, MappingRow, Shared,
+    ShareRow, HISTORY_KEEP,
+};
 
 const CHUNK: usize = 16 * 1024;
 const UDP_BUF: usize = 65536;
@@ -684,6 +687,33 @@ fn run_engine(client: Client, shared: &Shared) {
             if conns[i].dead.is_some() {
                 let c = conns.remove(i);
                 log(shared, format!("Conn {} closed: {}", c.id, c.dead.as_deref().unwrap_or("")));
+                let row = HistoryRow {
+                    ts: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                    dir: match c.dir {
+                        Dir::In => "in".into(),
+                        Dir::Out => "out".into(),
+                    },
+                    udp: c.udp,
+                    peer: c.peer.raw().to_string(),
+                    peer_name: client.friends().get_friend(c.peer).name(),
+                    port: c.port,
+                    duration_secs: c.created.elapsed().as_secs(),
+                    tx_bytes: c.tx_bytes,
+                    rx_bytes: c.rx_bytes,
+                    reason: c.dead.clone().unwrap_or_default(),
+                };
+                append_history(&row);
+                {
+                    let mut s = shared.lock().unwrap();
+                    s.snapshot.history.push(row);
+                    let over = s.snapshot.history.len().saturating_sub(HISTORY_KEEP);
+                    if over > 0 {
+                        s.snapshot.history.drain(0..over);
+                    }
+                }
                 // linger so anything still in Steam's send buffer is delivered
                 c.steam.close(NetConnectionEnd::App(AppNetConnectionEnd::generic_normal()), None, true);
             } else {
