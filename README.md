@@ -18,14 +18,21 @@ networking and falls back to Valve's relay network (SDR) when a direct
 connection isn't possible, so it works behind NAT and CGNAT without touching
 your router.
 
-- 🌐 **Web UI** on `http://127.0.0.1:7788` — share ports, connect to friends,
-  live per-connection bandwidth, adjustable send-rate limit
-- 🔀 **TCP and UDP** — stream tunnels for servers/SSH/web, datagram tunnels
-  for game and voice traffic
-- 📨 **Steam invites** — send a friend an invite for a shared port; an accept
-  prompt pops up in their steam-tunnel
+- 🎮 **Two steps to play** — the simple view detects running games (or you
+  pick one from the built-in list), opens all their ports in one click, and
+  invites a friend; multi-port games like Valheim just work. Extend the list
+  with your own `games.yaml`
+- 🌐 **Web UI** on `http://127.0.0.1:7788` (opens automatically on first
+  start) — advanced view with ports, forward targets, per-connection
+  bandwidth, ping/quality, history, and send-rate limit
+- 🔀 **TCP and UDP** — stream tunnels for servers/SSH/web, multi-flow
+  datagram tunnels for game and voice traffic
+- 📨 **Steam invites** — a friend gets a Steam invite carrying the game and
+  all its ports; one click in their steam-tunnel connects everything
 - 🔒 **Two auth layers** — Steam-authenticated SteamID gating (friends-only or
   explicit allowlist) plus an optional WireGuard-style pre-shared key
+- 🔔 **Native notifications** — friend connected/disconnected, and a reminder
+  when a shared port sits unused for an hour (both can be turned off)
 - 🖥️ **Tray icon** — open the UI or quit from the system tray
 - 🪟🐧 Windows x86_64 and Linux x86_64 (NixOS supported via `steam-run`)
 
