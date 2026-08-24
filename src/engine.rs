@@ -546,17 +546,33 @@ fn run_engine(client: Client, shared: &Shared) {
                     mappings.retain(|m| m.id != id);
                     log(shared, format!("Mapping {id} removed"));
                 }
-                Command::Invite { peer, port, udp } => {
+                Command::Invite { peer, ports, label } => {
+                    if ports.is_empty() {
+                        continue;
+                    }
                     let peer_id = SteamId::from_raw(peer);
                     let friend = client.friends().get_friend(peer_id);
                     let name = friend.name();
-                    let connect = if udp {
-                        format!("{INVITE_PREFIX}{port}:udp")
+                    let list = ports
+                        .iter()
+                        .map(|p| format!("{}/{}", p.port, if p.udp { "udp" } else { "tcp" }))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    // rich-presence connect strings are capped at 256 bytes;
+                    // the label must not collide with the format separators
+                    let label: String = label
+                        .chars()
+                        .filter(|c| !matches!(c, '|' | ',' | ':'))
+                        .take(48)
+                        .collect();
+                    let connect = if label.is_empty() {
+                        format!("{INVITE_PREFIX}{list}")
                     } else {
-                        format!("{INVITE_PREFIX}{port}")
+                        format!("{INVITE_PREFIX}{label}|{list}")
                     };
                     friend.invite_user_to_game(&connect);
-                    log(shared, format!("Steam invite for port {port} sent to {name}"));
+                    let what = if label.is_empty() { list } else { label };
+                    log(shared, format!("Steam invite for {what} sent to {name}"));
                 }
                 Command::DismissInvite { id } => {
                     invites.retain(|i| i.id != id);
@@ -600,19 +616,39 @@ fn run_engine(client: Client, shared: &Shared) {
         // ---- incoming Steam invites (friend sent us one) ----
         for req in invite_queue.lock().unwrap().drain(..) {
             if let Some(rest) = req.connect.strip_prefix(INVITE_PREFIX) {
-                let (port_str, udp) = match rest.strip_suffix(":udp") {
-                    Some(p) => (p, true),
-                    None => (rest, false),
+                // formats: "LABEL|7777/tcp,2456/udp", "7777/tcp", and the
+                // legacy single-port "7777" / "7777:udp"
+                let (label, list) = match rest.split_once('|') {
+                    Some((l, r)) => (l.to_string(), r),
+                    None => (String::new(), rest),
                 };
-                if let Ok(port) = port_str.trim().parse::<u16>() {
+                let mut ports = Vec::new();
+                for entry in list.split(',') {
+                    let entry = entry.trim();
+                    let (p, udp) = if let Some(x) = entry.strip_suffix(":udp") {
+                        (x, true)
+                    } else if let Some((x, proto)) = entry.split_once('/') {
+                        (x, proto.eq_ignore_ascii_case("udp"))
+                    } else {
+                        (entry, false)
+                    };
+                    if let Ok(port) = p.parse::<u16>() {
+                        if port > 0 {
+                            ports.push(crate::state::PortSpec { port, udp });
+                        }
+                    }
+                }
+                if !ports.is_empty() {
                     let from = req.friend.raw().to_string();
                     let from_name = client.friends().get_friend(req.friend).name();
-                    log(
-                        shared,
-                        format!("{from_name} invites you to connect to their port {port}"),
-                    );
-                    invites.retain(|i| !(i.from == from && i.port == port && i.udp == udp));
-                    invites.push(InviteRow { id: next_id, from, from_name, port, udp });
+                    let what = if label.is_empty() {
+                        format!("{} port(s)", ports.len())
+                    } else {
+                        label.clone()
+                    };
+                    log(shared, format!("{from_name} invites you to {what}"));
+                    invites.retain(|i| !(i.from == from && i.ports == ports));
+                    invites.push(InviteRow { id: next_id, from, from_name, label, ports });
                     next_id += 1;
                 }
             }

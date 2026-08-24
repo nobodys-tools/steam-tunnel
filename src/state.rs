@@ -265,8 +265,10 @@ pub struct InviteRow {
     pub id: u64,
     pub from: String,
     pub from_name: String,
-    pub port: u16,
-    pub udp: bool,
+    /// e.g. the game name; may be empty
+    pub label: String,
+    /// every port the inviter shared for this — multi-port games send all
+    pub ports: Vec<PortSpec>,
 }
 
 #[derive(Clone, Serialize, Default)]
@@ -309,7 +311,7 @@ pub enum Command {
     Unshare { port: u16, udp: bool },
     Connect { peer: u64, remote_port: u16, local_port: u16, udp: bool },
     StopMapping { id: u64 },
-    Invite { peer: u64, port: u16, udp: bool },
+    Invite { peer: u64, ports: Vec<PortSpec>, label: String },
     DismissInvite { id: u64 },
     /// psk: None = keep the current key, Some("") = clear, Some(k) = set
     SetSettings { psk: Option<String>, allowlist: Vec<String>, send_rate_kib: u32 },

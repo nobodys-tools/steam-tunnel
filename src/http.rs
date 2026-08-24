@@ -140,11 +140,26 @@ fn handle_post(shared: &Shared, path: &str, v: &Value) -> Result<(), &'static st
         "/api/stop_mapping" => Command::StopMapping {
             id: get_u64(v, "id").ok_or("invalid id")?,
         },
-        "/api/invite" => Command::Invite {
-            peer: get_u64(v, "peer").ok_or("invalid steam id")?,
-            port: get_port(v, "port").ok_or("invalid port")?,
-            udp: get_bool(v, "udp"),
-        },
+        "/api/invite" => {
+            // either a single {port, udp} or {ports: [{port, udp}, ...]}
+            let mut ports = Vec::new();
+            if let Value::Array(items) = &v["ports"] {
+                for i in items {
+                    let port = get_port(i, "port").ok_or("invalid port in ports")?;
+                    ports.push(crate::state::PortSpec { port, udp: get_bool(i, "udp") });
+                }
+            } else {
+                ports.push(crate::state::PortSpec {
+                    port: get_port(v, "port").ok_or("invalid port")?,
+                    udp: get_bool(v, "udp"),
+                });
+            }
+            Command::Invite {
+                peer: get_u64(v, "peer").ok_or("invalid steam id")?,
+                ports,
+                label: v["label"].as_str().unwrap_or("").trim().to_string(),
+            }
+        }
         "/api/dismiss_invite" => Command::DismissInvite {
             id: get_u64(v, "id").ok_or("invalid id")?,
         },

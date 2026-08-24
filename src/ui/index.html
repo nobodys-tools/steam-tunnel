@@ -69,11 +69,27 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
     font: 13px ui-monospace, monospace; }
   label { color: var(--muted); font-size: 13px; }
+  /* simple mode hides .adv, advanced mode hides .simp */
+  body:not(.advanced) .adv { display: none !important; }
+  body.advanced .simp { display: none !important; }
+  .titlerow { display: flex; justify-content: space-between; align-items: baseline; }
+  .steps b.n { display: inline-block; background: var(--accent); color: #10222e;
+    border-radius: 50%; width: 20px; height: 20px; text-align: center; line-height: 20px;
+    font-size: 12px; margin-right: 6px; }
+  .appline { display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 8px; border-top: 1px solid var(--border); gap: 8px; }
+  .appline:first-child { border-top: 0; }
+  .appline .meta { color: var(--muted); font-size: 12px; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+    background: #24371f; color: var(--ok); margin-left: 6px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>steam<span>-tunnel</span></h1>
+  <div class="titlerow">
+    <h1>steam<span>-tunnel</span></h1>
+    <button class="small" id="modeBtn" onclick="toggleMode()">Advanced view</button>
+  </div>
   <div class="status" id="status">connecting…</div>
 
   <div class="card update" id="updateCard" style="display:none">
@@ -93,7 +109,30 @@
 
   <div id="invites"></div>
 
-  <div class="card" id="tunnelFriendsCard" style="display:none">
+  <div class="card simp steps">
+    <h2><b class="n">1</b> Share a game</h2>
+    <div class="hint">Pick what your friends should join. Games already
+      running on this machine show up by themselves.</div>
+    <div id="appsList"></div>
+    <div class="row" style="margin-top:8px">
+      <select id="gameSel"><option value="">pick a game…</option></select>
+      <button onclick="shareSelGame()">Share</button>
+    </div>
+    <table id="simpleShares" style="margin-top:8px"></table>
+  </div>
+
+  <div class="card simp steps">
+    <h2><b class="n">2</b> Invite a friend</h2>
+    <div class="hint">They get a Steam invite; one click in their
+      steam-tunnel and the game connects like on LAN.</div>
+    <div class="row">
+      <input class="friendpick" id="simplePick" placeholder="search friend…">
+      <button onclick="inviteAllShares()">Invite</button>
+    </div>
+    <div id="simpleConns" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card adv" id="tunnelFriendsCard" style="display:none">
     <h2>Friends running steam-tunnel now</h2>
     <div class="hint">These friends are in App ID 480 right now — most likely
       with steam-tunnel open, ready to receive an invite or accept a
@@ -101,7 +140,7 @@
     <table id="tunnelFriends"></table>
   </div>
 
-  <div class="grid">
+  <div class="grid adv">
     <div class="card">
       <h2>Share a local port</h2>
       <div class="hint">Make a service reachable for friends — on <b>your</b>
@@ -150,19 +189,19 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card adv">
     <h2>Connections</h2>
     <table id="conns"></table>
   </div>
 
-  <div class="card">
+  <div class="card adv">
     <h2>History</h2>
     <div class="hint">Past connections, kept across restarts — who tunneled
       where, when, and how much data moved.</div>
     <table id="history"></table>
   </div>
 
-  <div class="card">
+  <div class="card adv">
     <h2>Security</h2>
     <label>Pre-shared key (optional, WireGuard-style). Generate one, copy it,
       save, and share it with your friend over a private channel — both sides
@@ -199,7 +238,7 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card adv">
     <h2>Log</h2>
     <div id="log"></div>
   </div>
@@ -229,6 +268,10 @@ function fmtDur(s) {
 }
 function esc(s) {
   return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+// for values inside onclick='f("...")' string literals: JS-escape, then HTML-escape
+function jsq(s) {
+  return esc(String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"));
 }
 async function post(path, body) {
   // X-ST marks the request as coming from this page (CSRF guard, see http.rs)
@@ -290,8 +333,49 @@ function initPicker(el) {
     list.style.display = 'none';
   });
 }
-['invitePick', 'connectPick', 'allowPick'].forEach(id =>
+['invitePick', 'connectPick', 'allowPick', 'simplePick'].forEach(id =>
   initPicker(document.getElementById(id)));
+
+// ---- simple/advanced mode ----
+function setMode(adv) {
+  document.body.classList.toggle('advanced', adv);
+  localStorage.setItem('ui-adv', adv ? '1' : '');
+  document.getElementById('modeBtn').textContent = adv ? 'Simple view' : 'Advanced view';
+}
+function toggleMode() { setMode(!document.body.classList.contains('advanced')); }
+setMode(localStorage.getItem('ui-adv') === '1');
+
+// ---- one-click game sharing ----
+let STATE = {shares: [], games: [], apps: []};
+// remember what the shares belong to, so invites can carry the game name
+let lastLabel = localStorage.getItem('last-label') || '';
+function isShared(port, udp) {
+  return STATE.shares.some(x => x.port === port && !!x.udp === !!udp);
+}
+function shareGame(name) {
+  const g = STATE.games.find(g => g.name === name);
+  if (!g) return;
+  lastLabel = name;
+  localStorage.setItem('last-label', name);
+  for (const p of g.ports)
+    if (!isShared(p.port, p.udp)) post('/api/share', {port: p.port, udp: !!p.udp});
+}
+function shareApp(port, udp, label) {
+  lastLabel = label || '';
+  localStorage.setItem('last-label', lastLabel);
+  if (!isShared(port, udp)) post('/api/share', {port: port, udp: !!udp});
+}
+function shareSelGame() {
+  const v = document.getElementById('gameSel').value;
+  if (v) shareGame(v);
+}
+function inviteAllShares() {
+  const peer = pickedId('simplePick');
+  if (!peer) { alert('Pick a friend in the search box first.'); return; }
+  if (!STATE.shares.length) { alert('Share a game first (step 1).'); return; }
+  const ports = STATE.shares.map(x => ({port: x.port, udp: !!x.udp}));
+  post('/api/invite', {peer: peer, ports: ports, label: lastLabel});
+}
 
 function sharePort() {
   const p = document.getElementById('sharePort').value;
@@ -323,7 +407,7 @@ function inviteDirect(sid, name, port, udp) {
   post('/api/invite', {peer: sid, port: port, udp: udp});
 }
 function pickFriend(sid, name) {
-  for (const id of ['connectPick', 'invitePick']) {
+  for (const id of ['connectPick', 'invitePick', 'simplePick']) {
     const el = document.getElementById(id);
     el.value = name + ' — ' + sid;
     el.dataset.sid = sid;
@@ -331,9 +415,12 @@ function pickFriend(sid, name) {
   }
   document.getElementById('remotePort').focus();
 }
-function acceptInvite(inv) {
-  post('/api/connect', {peer: inv.from, remote_port: inv.port, local_port: inv.port, udp: !!inv.udp})
-    .then(ok => { if (ok) post('/api/dismiss_invite', {id: inv.id}); });
+async function acceptInvite(inv) {
+  let ok = true;
+  for (const p of (inv.ports || []))
+    ok = (await post('/api/connect',
+      {peer: inv.from, remote_port: p.port, local_port: p.port, udp: !!p.udp})) && ok;
+  if (ok) post('/api/dismiss_invite', {id: inv.id});
 }
 
 function genPsk() {
@@ -451,29 +538,94 @@ async function tick() {
   }
 
   FRIENDS = s.friends || [];
+  STATE = {shares: s.shares || [], games: s.games || [], apps: s.apps || []};
   document.getElementById('version').textContent = s.version ? 'v' + s.version : '';
   renderUpdate(s.version);
+
+  // step 1: known-games dropdown (filled once)
+  const sel = document.getElementById('gameSel');
+  if (sel.options.length <= 1 && STATE.games.length) {
+    for (const g of STATE.games) {
+      const o = document.createElement('option');
+      o.value = g.name;
+      o.textContent = g.name + ' (' + g.ports.map(p =>
+        p.port + '/' + (p.udp ? 'udp' : 'tcp')).join(', ') + ')';
+      sel.appendChild(o);
+    }
+  }
+
+  // step 1: detected running games/apps
+  const seenGames = new Set();
+  const lines = [];
+  for (const a of STATE.apps) {
+    if (a.game) {
+      if (seenGames.has(a.game)) continue;
+      seenGames.add(a.game);
+      const g = STATE.games.find(g => g.name === a.game);
+      const all = g && g.ports.every(p => isShared(p.port, p.udp));
+      lines.push('<div class="appline"><span><b>' + esc(a.game) +
+        '</b><span class="chip">running</span></span>' +
+        (all ? '<span class="meta">shared ✓</span>'
+             : '<button class="small" onclick="shareGame(\'' + jsq(a.game) + '\')">Share</button>') +
+        '</div>');
+    } else if (a.process && lines.length < 14) {
+      lines.push('<div class="appline"><span>' + esc(a.process) +
+        ' <span class="meta">' + (a.udp ? 'udp' : 'tcp') + ' :' + a.port + '</span></span>' +
+        (isShared(a.port, a.udp) ? '<span class="meta">shared ✓</span>'
+          : '<button class="small" onclick="shareApp(' + a.port + ',' + !!a.udp +
+            ',\'' + jsq(a.process) + '\')">Share</button>') + '</div>');
+    }
+  }
+  document.getElementById('appsList').innerHTML = lines.join('') ||
+    '<div class="empty">nothing detected yet — pick a game below</div>';
+
+  // step 1: what's currently shared
+  document.getElementById('simpleShares').innerHTML = STATE.shares.length
+    ? STATE.shares.map(x =>
+        '<tr><td>' + proto(x.udp) + ' :' + x.port + '</td><td style="text-align:right">' +
+        '<button class="small" onclick="post(\'/api/unshare\',{port:' + x.port +
+        ',udp:' + !!x.udp + '})">stop</button></td></tr>').join('')
+    : '';
+
+  // step 2: who is connected right now
+  const scLines = (s.conns || []).filter(c => c.state === 'active').map(c => {
+    const who = esc(c.peer_name);
+    const dir = c.dir === 'in' ? who + ' → you' : 'you → ' + who;
+    const ping = c.ping_ms >= 0 ? ' · ' + c.ping_ms + ' ms' : '';
+    return '<div class="appline"><span>' + dir +
+      ' <span class="meta">:' + c.port + ping + '</span></span>' +
+      '<span class="meta">' + fmtBytes(c.tx_rate + c.rx_rate) + '/s</span></div>';
+  });
+  document.getElementById('simpleConns').innerHTML = scLines.length
+    ? '<div class="hint" style="margin:0 0 4px">Connected now:</div>' + scLines.join('')
+    : '';
 
   const inTunnel = FRIENDS.filter(f => f.in_tunnel);
   const tfCard = document.getElementById('tunnelFriendsCard');
   tfCard.style.display = inTunnel.length ? '' : 'none';
   document.getElementById('tunnelFriends').innerHTML = inTunnel.map(f => {
     const shareBtns = (s.shares||[]).map(x =>
-      '<button class="small" onclick="inviteDirect(\'' + f.steam_id + '\',\'' + esc(f.name) +
+      '<button class="small" onclick="inviteDirect(\'' + f.steam_id + '\',\'' + jsq(f.name) +
       '\',' + x.port + ',' + !!x.udp + ')">invite to :' + x.port + '</button>').join(' ');
     return '<tr><td><b>' + esc(f.name) + '</b> <span class="tag in">in steam-tunnel</span></td>' +
       '<td style="text-align:right">' + shareBtns +
-      ' <button class="small" onclick="pickFriend(\'' + f.steam_id + '\',\'' + esc(f.name) +
+      ' <button class="small" onclick="pickFriend(\'' + f.steam_id + '\',\'' + jsq(f.name) +
       '\')">connect…</button></td></tr>';
   }).join('');
 
-  document.getElementById('invites').innerHTML = (s.invites||[]).map(inv =>
-    '<div class="card invite"><div class="row"><span><b>' + esc(inv.from_name) +
-    '</b> invites you to connect to ' + (inv.udp ? 'UDP' : 'TCP') + ' port <b>' + inv.port +
-    '</b> on their machine (appears at localhost:' + inv.port + ' for you)</span>' +
-    '<button onclick=\'acceptInvite(' + JSON.stringify({id:inv.id, from:inv.from, port:inv.port, udp:!!inv.udp}) + ')\'>Accept</button>' +
-    '<button class="small" onclick="post(\'/api/dismiss_invite\',{id:' + inv.id + '})">Dismiss</button>' +
-    '</div></div>').join('');
+  document.getElementById('invites').innerHTML = (s.invites||[]).map(inv => {
+    const plist = (inv.ports||[]).map(p => p.port + '/' + (p.udp ? 'udp' : 'tcp')).join(', ');
+    const what = inv.label ? '<b>' + esc(inv.label) + '</b> (' + plist + ')'
+                           : 'port(s) <b>' + plist + '</b>';
+    return '<div class="card invite"><div class="row"><span><b>' + esc(inv.from_name) +
+      '</b> invites you to join ' + what +
+      ' — it appears on localhost for you, same port numbers</span>' +
+      '<button onclick=\'acceptInvite(' +
+      JSON.stringify({id: inv.id, from: inv.from, ports: inv.ports}).replace(/'/g, '&#39;') +
+      ')\'>Accept</button>' +
+      '<button class="small" onclick="post(\'/api/dismiss_invite\',{id:' + inv.id + '})">Dismiss</button>' +
+      '</div></div>';
+  }).join('');
 
   document.getElementById('shares').innerHTML = (s.shares||[]).length
     ? s.shares.map(x =>
