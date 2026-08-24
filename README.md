@@ -71,7 +71,9 @@ curl -fsSL https://raw.githubusercontent.com/nobodys-tools/steam-tunnel/main/uni
 1. Start Steam, then start steam-tunnel (both friends). The web UI opens at
    **http://127.0.0.1:7788** (also from the tray icon).
 2. **Host:** *Share a local port* → e.g. `25565`. Optionally pick a friend and
-   press **invite**.
+   press **invite**. A share can also forward to another device on your
+   network — set *forward to* to e.g. `192.168.1.50:8096` to share your NAS's
+   Jellyfin under whatever port number you choose.
 3. **Friend:** accept the invite banner in their web UI — or manually pick you
    under *Connect to a friend's port* and enter the port.
 4. The friend points their program at `localhost:<port>` and lands on your

@@ -71,10 +71,29 @@ fn get_bool(v: &Value, key: &str) -> bool {
 
 fn handle_post(shared: &Shared, path: &str, v: &Value) -> Result<(), &'static str> {
     let cmd = match path {
-        "/api/share" => Command::Share {
-            port: get_port(v, "port").ok_or("invalid port")?,
-            udp: get_bool(v, "udp"),
-        },
+        "/api/share" => {
+            let target = match v["target"].as_str().map(str::trim) {
+                Some(t) if !t.is_empty() => {
+                    // loose host:port validation; supports names and IPv6 [..]:port
+                    let port_ok = t
+                        .rsplit_once(':')
+                        .and_then(|(host, p)| {
+                            (!host.is_empty()).then(|| p.parse::<u16>().ok()).flatten()
+                        })
+                        .is_some();
+                    if !port_ok {
+                        return Err("target must be host:port");
+                    }
+                    Some(t.to_string())
+                }
+                _ => None,
+            };
+            Command::Share {
+                port: get_port(v, "port").ok_or("invalid port")?,
+                udp: get_bool(v, "udp"),
+                target,
+            }
+        }
         "/api/unshare" => Command::Unshare {
             port: get_port(v, "port").ok_or("invalid port")?,
             udp: get_bool(v, "udp"),

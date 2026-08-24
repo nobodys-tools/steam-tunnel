@@ -82,6 +82,8 @@ pub struct FriendRow {
 pub struct ShareRow {
     pub port: u16,
     pub udp: bool,
+    /// where incoming tunnels are forwarded, e.g. "192.168.1.50:8096"
+    pub target: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -152,7 +154,7 @@ impl Snapshot {
 }
 
 pub enum Command {
-    Share { port: u16, udp: bool },
+    Share { port: u16, udp: bool, target: Option<String> },
     Unshare { port: u16, udp: bool },
     Connect { peer: u64, remote_port: u16, local_port: u16, udp: bool },
     StopMapping { id: u64 },

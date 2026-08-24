@@ -56,6 +56,12 @@ fn conn_options(send_rate_kib: u32) -> Vec<NetworkingConfigEntry> {
     ]
 }
 
+/// Resolve "host:port" to a socket address (first result).
+fn resolve_target(target: &str) -> Option<SocketAddr> {
+    use std::net::ToSocketAddrs;
+    target.to_socket_addrs().ok()?.next()
+}
+
 /// Fresh random nonce; None if the OS RNG is unavailable (then the caller
 /// must refuse the operation rather than fall back to a predictable value).
 fn fresh_nonce() -> Option<[u8; 32]> {
@@ -129,6 +135,8 @@ struct Conn {
     created: Instant,
     /// host side: the random challenge sent in HELLO; None on client conns
     nonce: Option<[u8; 32]>,
+    /// host side: where this share forwards to ("host:port")
+    target: String,
     /// TCP only: bytes received over Steam, waiting for the local socket
     tcp_out: VecDeque<u8>,
     /// TCP only: chunk Steam refused (send buffer full), retried next tick
@@ -172,6 +180,7 @@ fn new_conn(
     local: Option<LocalSock>,
     state: ConnState,
     nonce: Option<[u8; 32]>,
+    target: String,
     mapping_id: Option<u64>,
 ) -> Conn {
     Conn {
@@ -185,6 +194,7 @@ fn new_conn(
         state,
         created: Instant::now(),
         nonce,
+        target,
         tcp_out: VecDeque::new(),
         steam_pending: None,
         pre_buf: Vec::new(),
@@ -206,6 +216,9 @@ fn new_conn(
 struct Share {
     port: u16,
     udp: bool,
+    /// forward target ("host:port"); resolved per connection so DNS/mDNS
+    /// names keep working when addresses change
+    target: String,
     listen: ListenSocket,
 }
 
@@ -301,7 +314,8 @@ fn run_engine(client: Client, shared: &Shared) {
         };
         for cmd in cmds {
             match cmd {
-                Command::Share { port, udp } => {
+                Command::Share { port, udp, target } => {
+                    let target = target.unwrap_or_else(|| format!("127.0.0.1:{port}"));
                     if let Some(existing) = shares.iter().find(|sh| sh.port == port) {
                         if existing.udp != udp {
                             let p = if existing.udp { "udp" } else { "tcp" };
@@ -312,8 +326,8 @@ fn run_engine(client: Client, shared: &Shared) {
                     match sockets.create_listen_socket_p2p(port as i32, conn_options(rate)) {
                         Ok(listen) => {
                             let proto = if udp { "udp" } else { "tcp" };
-                            log(shared, format!("Sharing local {proto} port {port}"));
-                            shares.push(Share { port, udp, listen });
+                            log(shared, format!("Sharing {proto} port {port} -> {target}"));
+                            shares.push(Share { port, udp, target, listen });
                         }
                         Err(_) => log(shared, format!("Failed to open listen socket for port {port}")),
                     }
@@ -419,14 +433,16 @@ fn run_engine(client: Client, shared: &Shared) {
                     // listen sockets carry the rate config; recreate them so
                     // new incoming connections pick up the new rate
                     if rate_changed {
-                        let old: Vec<(u16, bool)> =
-                            shares.iter().map(|sh| (sh.port, sh.udp)).collect();
+                        let old: Vec<(u16, bool, String)> = shares
+                            .iter()
+                            .map(|sh| (sh.port, sh.udp, sh.target.clone()))
+                            .collect();
                         shares.clear();
-                        for (port, udp) in old {
+                        for (port, udp, target) in old {
                             if let Ok(listen) = sockets
                                 .create_listen_socket_p2p(port as i32, conn_options(send_rate_kib))
                             {
-                                shares.push(Share { port, udp, listen });
+                                shares.push(Share { port, udp, target, listen });
                             }
                         }
                         log(shared, "Send rate updated (applies to new connections)".into());
@@ -505,6 +521,7 @@ fn run_engine(client: Client, shared: &Shared) {
                                 None,
                                 ConnState::AwaitAuth,
                                 Some(nonce),
+                                share.target.clone(),
                                 None,
                             ));
                             next_id += 1;
@@ -552,6 +569,7 @@ fn run_engine(client: Client, shared: &Shared) {
                                         Some(LocalSock::Udp { sock, peer: None }),
                                         ConnState::AwaitHello,
                                         None,
+                                        String::new(),
                                         Some(m.id),
                                     ));
                                     m.udp_conn = Some(next_id);
@@ -599,6 +617,7 @@ fn run_engine(client: Client, shared: &Shared) {
                                     Some(LocalSock::Tcp(tcp)),
                                     ConnState::AwaitHello,
                                     None,
+                                    String::new(),
                                     Some(m.id),
                                 ));
                                 next_id += 1;
@@ -707,7 +726,11 @@ fn run_engine(client: Client, shared: &Shared) {
             s.snapshot.invites = invites.clone();
             s.snapshot.shares = shares
                 .iter()
-                .map(|sh| ShareRow { port: sh.port, udp: sh.udp })
+                .map(|sh| ShareRow {
+                    port: sh.port,
+                    udp: sh.udp,
+                    target: sh.target.clone(),
+                })
                 .collect();
             s.snapshot.mappings = mappings
                 .iter()
@@ -859,10 +882,21 @@ fn pump_conn(c: &mut Conn, psk: &str, log_msgs: &mut Vec<String>) {
                         c.mark_dead("protocol mismatch");
                         return;
                     }
-                    // auth ok -> connect to the local service
-                    let addr: SocketAddr = ([127, 0, 0, 1], c.port).into();
+                    // auth ok -> connect to the share's target
+                    let addr = match resolve_target(&c.target) {
+                        Some(a) => a,
+                        None => {
+                            log_msgs.push(format!(
+                                "Conn {}: cannot resolve target {}",
+                                c.id, c.target
+                            ));
+                            c.mark_dead("target unresolvable");
+                            return;
+                        }
+                    };
                     if c.udp {
-                        let bound: SocketAddr = ([127, 0, 0, 1], 0).into();
+                        // wildcard bind: the target may be another machine
+                        let bound: SocketAddr = ([0, 0, 0, 0], 0).into();
                         match UdpSocket::bind(bound).and_then(|s| {
                             s.set_nonblocking(true)?;
                             s.connect(addr)?;
@@ -872,8 +906,10 @@ fn pump_conn(c: &mut Conn, psk: &str, log_msgs: &mut Vec<String>) {
                                 c.local = Some(LocalSock::Udp { sock, peer: None });
                                 let _ = c.steam.send_message(M_OK, SendFlags::RELIABLE);
                                 c.state = ConnState::Active;
-                                log_msgs
-                                    .push(format!("Conn {}: udp tunnel to port {} open", c.id, c.port));
+                                log_msgs.push(format!(
+                                    "Conn {}: udp tunnel to {} open",
+                                    c.id, c.target
+                                ));
                             }
                             Err(e) => {
                                 log_msgs.push(format!("Conn {}: udp socket error: {e}", c.id));
@@ -889,15 +925,17 @@ fn pump_conn(c: &mut Conn, psk: &str, log_msgs: &mut Vec<String>) {
                                 c.local = Some(LocalSock::Tcp(tcp));
                                 let _ = c.steam.send_message(M_OK, SendFlags::RELIABLE);
                                 c.state = ConnState::Active;
-                                log_msgs
-                                    .push(format!("Conn {}: tunnel to local port {} open", c.id, c.port));
+                                log_msgs.push(format!(
+                                    "Conn {}: tunnel to {} open",
+                                    c.id, c.target
+                                ));
                             }
                             Err(e) => {
                                 log_msgs.push(format!(
-                                    "Conn {}: local service on port {} unreachable: {e}",
-                                    c.id, c.port
+                                    "Conn {}: target {} unreachable: {e}",
+                                    c.id, c.target
                                 ));
-                                c.mark_dead("local service unreachable");
+                                c.mark_dead("target unreachable");
                                 return;
                             }
                         }

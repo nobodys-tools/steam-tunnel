@@ -85,11 +85,17 @@
   <div class="grid">
     <div class="card">
       <h2>Share a local port</h2>
-      <div class="hint">Make a service running on <b>your</b> machine (game server,
-        web app, SSH …) reachable for friends. They connect with steam-tunnel
-        using this port number.</div>
+      <div class="hint">Make a service reachable for friends — on <b>your</b>
+        machine, or anywhere on your network. They connect with steam-tunnel
+        using this port number. Leave <b>forward to</b> empty for
+        <span style="font-family:monospace">localhost:&lt;port&gt;</span>, or
+        point it at another device, e.g.
+        <span style="font-family:monospace">192.168.1.50:8096</span> to share
+        your NAS's Jellyfin.</div>
       <div class="row">
         <input type="number" id="sharePort" placeholder="port" min="1" max="65535">
+        <input type="text" id="shareTarget" placeholder="forward to host:port (optional)"
+               style="flex:1;min-width:190px">
         <select id="shareProto"><option value="tcp">TCP</option><option value="udp">UDP</option></select>
         <button onclick="sharePort()">Share</button>
       </div>
@@ -257,7 +263,13 @@ function initPicker(el) {
 function sharePort() {
   const p = document.getElementById('sharePort').value;
   const udp = document.getElementById('shareProto').value === 'udp';
-  if (p) post('/api/share', {port: +p, udp: udp});
+  const target = document.getElementById('shareTarget').value.trim();
+  if (!p) return;
+  const body = {port: +p, udp: udp};
+  if (target) body.target = target;
+  post('/api/share', body).then(ok => {
+    if (ok) document.getElementById('shareTarget').value = '';
+  });
 }
 function invite(port, udp) {
   const peer = pickedId('invitePick');
@@ -388,7 +400,8 @@ async function tick() {
 
   document.getElementById('shares').innerHTML = (s.shares||[]).length
     ? s.shares.map(x =>
-        '<tr><td>' + proto(x.udp) + ' localhost:' + x.port + ' → friends</td><td style="text-align:right">' +
+        '<tr><td>' + proto(x.udp) + ' :' + x.port + ' → ' + esc(x.target || 'localhost:' + x.port) +
+        '</td><td style="text-align:right">' +
         '<button class="small" onclick="invite(' + x.port + ',' + !!x.udp + ')">invite</button> ' +
         '<button class="small" onclick="post(\'/api/unshare\',{port:' + x.port + ',udp:' + !!x.udp + '})">stop</button>' +
         '</td></tr>').join('')
