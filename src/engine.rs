@@ -153,6 +153,10 @@ struct Conn {
     peer_version: String,
     /// client UDP only: the mapping this conn belongs to (for respawn)
     mapping_id: Option<u64>,
+    /// from Steam's realtime connection status; -1 = not measured yet
+    ping_ms: i32,
+    /// worst of local/remote packet delivery rate, 0..1; -1 = unknown
+    quality: f32,
     tx_bytes: u64,
     rx_bytes: u64,
     tx_rate: u64,
@@ -203,6 +207,8 @@ fn new_conn(
         wr_shutdown: false,
         peer_version: String::new(),
         mapping_id,
+        ping_ms: -1,
+        quality: -1.0,
         tx_bytes: 0,
         rx_bytes: 0,
         tx_rate: 0,
@@ -663,6 +669,12 @@ fn run_engine(client: Client, shared: &Shared) {
                         _ => {}
                     }
                 }
+                if let Ok((rt, _)) = sockets.get_realtime_connection_status(&c.steam, 0) {
+                    c.ping_ms = rt.ping();
+                    c.quality = rt
+                        .connection_quality_local()
+                        .min(rt.connection_quality_remote());
+                }
             }
         }
 
@@ -760,6 +772,8 @@ fn run_engine(client: Client, shared: &Shared) {
                         ConnState::Active => "active".into(),
                         _ => "handshake".into(),
                     },
+                    ping_ms: c.ping_ms,
+                    quality: c.quality,
                     tx_bytes: c.tx_bytes,
                     rx_bytes: c.rx_bytes,
                     tx_rate: c.tx_rate,

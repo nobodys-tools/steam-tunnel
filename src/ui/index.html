@@ -408,6 +408,14 @@ setInterval(checkUpdate, 6 * 3600 * 1000);
 function proto(udp) {
   return '<span class="tag ' + (udp ? 'hs' : 'out') + '">' + (udp ? 'udp' : 'tcp') + '</span>';
 }
+// ping colored by packet delivery quality (worst direction)
+function pingCell(c) {
+  if (c.ping_ms == null || c.ping_ms < 0) return '<td class="num">—</td>';
+  const q = c.quality;
+  const color = q < 0 ? 'var(--muted)' : q >= 0.97 ? 'var(--ok)' : q >= 0.8 ? 'var(--warn)' : 'var(--bad)';
+  const title = q >= 0 ? (q * 100).toFixed(1) + '% of packets delivered' : '';
+  return '<td class="num" style="color:' + color + '" title="' + title + '">' + c.ping_ms + ' ms</td>';
+}
 
 async function tick() {
   let s;
@@ -473,6 +481,7 @@ async function tick() {
   const conns = s.conns || [];
   document.getElementById('conns').innerHTML =
     '<tr><th>dir</th><th>proto</th><th>peer</th><th>ver</th><th>port</th><th>state</th>' +
+    '<th style="text-align:right">ping</th>' +
     '<th style="text-align:right">up</th><th style="text-align:right">down</th>' +
     '<th style="text-align:right">rate ↑</th><th style="text-align:right">rate ↓</th>' +
     '<th style="text-align:right">age</th></tr>' +
@@ -483,12 +492,13 @@ async function tick() {
       '<td style="color:var(--muted)">' + (c.peer_version ? 'v' + esc(c.peer_version) : '—') + '</td>' +
       '<td class="num">' + c.port + '</td>' +
       '<td>' + (c.state === 'active' ? c.state : '<span class="tag hs">handshake</span>') + '</td>' +
+      pingCell(c) +
       '<td class="num">' + fmtBytes(c.tx_bytes) + '</td>' +
       '<td class="num">' + fmtBytes(c.rx_bytes) + '</td>' +
       '<td class="num">' + fmtBytes(c.tx_rate) + '/s</td>' +
       '<td class="num">' + fmtBytes(c.rx_rate) + '/s</td>' +
       '<td class="num">' + c.age_secs + 's</td></tr>').join('')
-    : '<tr><td class="empty" colspan="11">no active connections</td></tr>');
+    : '<tr><td class="empty" colspan="12">no active connections</td></tr>');
 
   if (!settingsDirty) {
     document.getElementById('allowlist').value = (s.allowlist||[]).join('\n');

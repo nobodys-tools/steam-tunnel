@@ -107,6 +107,10 @@ pub struct ConnRow {
     pub peer_version: String,
     pub port: u16,
     pub state: String,
+    /// Steam round-trip time in ms; -1 = not measured yet
+    pub ping_ms: i32,
+    /// worst-direction packet delivery rate, 0..1; -1 = unknown
+    pub quality: f32,
     pub tx_bytes: u64,
     pub rx_bytes: u64,
     pub tx_rate: u64,
